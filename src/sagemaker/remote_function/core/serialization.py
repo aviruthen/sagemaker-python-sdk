@@ -17,6 +17,7 @@ import dataclasses
 import json
 
 import io
+import os
 
 import sys
 import hmac
@@ -195,7 +196,11 @@ def deserialize_func_from_s3(sagemaker_session: Session, s3_uri: str) -> Callabl
 
     bytes_to_deserialize = _read_bytes_from_s3(f"{s3_uri}/payload.pkl", sagemaker_session)
 
-    _perform_integrity_check(expected_hash_value=metadata.sha256_hash, buffer=bytes_to_deserialize)
+    _perform_integrity_check(
+        expected_hash_value=metadata.sha256_hash,
+        buffer=bytes_to_deserialize,
+        secret_key=os.environ.get("REMOTE_FUNCTION_SECRET_KEY"),
+    )
 
     return CloudpickleSerializer.deserialize(f"{s3_uri}/payload.pkl", bytes_to_deserialize)
 
@@ -280,7 +285,11 @@ def deserialize_obj_from_s3(sagemaker_session: Session, s3_uri: str) -> Any:
 
     bytes_to_deserialize = _read_bytes_from_s3(f"{s3_uri}/payload.pkl", sagemaker_session)
 
-    _perform_integrity_check(expected_hash_value=metadata.sha256_hash, buffer=bytes_to_deserialize)
+    _perform_integrity_check(
+        expected_hash_value=metadata.sha256_hash,
+        buffer=bytes_to_deserialize,
+        secret_key=os.environ.get("REMOTE_FUNCTION_SECRET_KEY"),
+    )
 
     return CloudpickleSerializer.deserialize(f"{s3_uri}/payload.pkl", bytes_to_deserialize)
 
@@ -355,7 +364,11 @@ def deserialize_exception_from_s3(sagemaker_session: Session, s3_uri: str) -> An
 
     bytes_to_deserialize = _read_bytes_from_s3(f"{s3_uri}/payload.pkl", sagemaker_session)
 
-    _perform_integrity_check(expected_hash_value=metadata.sha256_hash, buffer=bytes_to_deserialize)
+    _perform_integrity_check(
+        expected_hash_value=metadata.sha256_hash,
+        buffer=bytes_to_deserialize,
+        secret_key=os.environ.get("REMOTE_FUNCTION_SECRET_KEY"),
+    )
 
     return CloudpickleSerializer.deserialize(f"{s3_uri}/payload.pkl", bytes_to_deserialize)
 
@@ -380,18 +393,44 @@ def _read_bytes_from_s3(s3_uri, sagemaker_session):
         ) from e
 
 
-def _compute_hash(buffer: bytes) -> str:
-    """Compute the sha256 hash"""
+def _compute_hash(buffer: bytes, secret_key: str = None) -> str:
+    """Compute hash for integrity verification.
+
+    Args:
+        buffer: The data to hash
+        secret_key: Optional secret key for hash computation. If None, attempts to read
+                   from REMOTE_FUNCTION_SECRET_KEY environment variable.
+
+    Returns:
+        The computed hash as a hex string
+    """
+    # If no secret_key provided, try to get from environment
+    if secret_key is None:
+        secret_key = os.environ.get("REMOTE_FUNCTION_SECRET_KEY", "")
+
+    # Use HMAC if secret_key is present and non-empty, otherwise use SHA256
+    if secret_key:
+        return hmac.new(secret_key.encode(), msg=buffer, digestmod=hashlib.sha256).hexdigest()
+
     return hashlib.sha256(buffer).hexdigest()
 
 
-def _perform_integrity_check(expected_hash_value: str, buffer: bytes):
+def _perform_integrity_check(expected_hash_value: str, buffer: bytes, secret_key: str = None):
     """Performs integrity checks for serialized code/arguments uploaded to s3.
 
     Verifies whether the hash read from s3 matches the hash calculated
     during remote function execution.
+
+    Args:
+        expected_hash_value: The hash value from metadata
+        buffer: The data to verify
+        secret_key: Optional secret key for hash computation. If None, attempts to read
+                   from REMOTE_FUNCTION_SECRET_KEY environment variable.
+
+    Raises:
+        DeserializationError: If the integrity check fails
     """
-    actual_hash_value = _compute_hash(buffer=buffer)
+    actual_hash_value = _compute_hash(buffer=buffer, secret_key=secret_key)
     if not hmac.compare_digest(expected_hash_value, actual_hash_value):
         raise DeserializationError(
             "Integrity check for the serialized function or data failed. "
