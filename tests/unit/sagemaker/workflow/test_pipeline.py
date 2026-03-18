@@ -53,6 +53,7 @@ def role_arn():
 
 
 def test_pipeline_create_and_update_without_role_arn(sagemaker_session_mock):
+
     mock_session = copy.deepcopy(sagemaker_session_mock)
     mock_session.sagemaker_config = {}
     pipeline = Pipeline(
@@ -67,6 +68,31 @@ def test_pipeline_create_and_update_without_role_arn(sagemaker_session_mock):
         pipeline.update()
     with pytest.raises(ValueError):
         pipeline.upsert()
+
+
+def test_pipeline_create_with_invalid_role_arn_type(sagemaker_session_mock):
+    """Test that create(), update(), and upsert() raise ValueError for non-string role_arn."""
+    mock_session = copy.deepcopy(sagemaker_session_mock)
+    mock_session.sagemaker_config = {}
+    pipeline = Pipeline(
+        name="MyPipeline",
+        parameters=[],
+        steps=[],
+        sagemaker_session=mock_session,
+    )
+    invalid_role_arns = [
+        {"arn": "arn:aws:iam::111111111111:role/SageMakerRole"},
+        123,
+        ["arn:aws:iam::111111111111:role/SageMakerRole"],
+        True,
+    ]
+    for invalid_role in invalid_role_arns:
+        with pytest.raises(ValueError, match="role_arn must be a string or None"):
+            pipeline.create(role_arn=invalid_role)
+        with pytest.raises(ValueError, match="role_arn must be a string or None"):
+            pipeline.update(role_arn=invalid_role)
+        with pytest.raises(ValueError, match="role_arn must be a string or None"):
+            pipeline.upsert(role_arn=invalid_role)
 
 
 def test_pipeline_create_and_update_with_config_injection(sagemaker_session_mock):

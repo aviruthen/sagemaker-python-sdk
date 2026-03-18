@@ -77,6 +77,24 @@ _DEFAULT_EXPERIMENT_CFG = PipelineExperimentConfig(
 _DEFAULT_DEFINITION_CFG = PipelineDefinitionConfig(use_custom_job_prefix=False)
 
 
+
+def _validate_role_arn(role_arn):
+    """Validates that role_arn is either None or a string.
+
+    Args:
+        role_arn: The role ARN value to validate.
+
+    Raises:
+        ValueError: If role_arn is not None and not a string.
+    """
+    if role_arn is not None and not isinstance(role_arn, str):
+        raise ValueError(
+            "role_arn must be a string or None, but got {}: {}".format(
+                type(role_arn).__name__, role_arn
+            )
+        )
+
+
 class Pipeline:
     """Pipeline for workflow."""
 
@@ -163,7 +181,23 @@ class Pipeline:
                 that is applied to each of the executions of the pipeline. It takes precedence
                 over the parallelism configuration of the parent pipeline.
 
-        Returns:
+                Returns:
+            A response dict from the service.
+        """
+        _validate_role_arn(role_arn)
+        role_arn = resolve_value_from_config(
+            role_arn, PIPELINE_ROLE_ARN_PATH, sagemaker_session=self.sagemaker_session
+        )
+        if not role_arn:
+            # Originally IAM role was a required parameter.
+            # Now we marked that as Optional because we can fetch it from SageMakerConfig
+            # Because of marking that parameter as optional, we should validate if it is None, even
+            # after fetching the config.
+            raise ValueError("An AWS IAM role is required to create a Pipeline.")
+        if self.sagemaker_session.local_mode:
+            if parallelism_config:
+                logger.warning("Pipeline parallelism config is not supported in the local mode.")
+            return self.sagemaker_session.sagemaker_client.create_pipeline(self, description)
             A response dict from the service.
         """
         role_arn = resolve_value_from_config(
@@ -176,6 +210,7 @@ class Pipeline:
             # after fetching the config.
             raise ValueError("An AWS IAM role is required to create a Pipeline.")
         if self.sagemaker_session.local_mode:
+
             if parallelism_config:
                 logger.warning("Pipeline parallelism config is not supported in the local mode.")
             return self.sagemaker_session.sagemaker_client.create_pipeline(self, description)
@@ -270,6 +305,7 @@ sagemaker.html#SageMaker.Client.describe_pipeline>`_
         Returns:
             A response dict from the service.
         """
+        _validate_role_arn(role_arn)
         role_arn = resolve_value_from_config(
             role_arn, PIPELINE_ROLE_ARN_PATH, sagemaker_session=self.sagemaker_session
         )
@@ -307,6 +343,7 @@ sagemaker.html#SageMaker.Client.describe_pipeline>`_
         Returns:
             response dict from service
         """
+        _validate_role_arn(role_arn)
         role_arn = resolve_value_from_config(
             role_arn, PIPELINE_ROLE_ARN_PATH, sagemaker_session=self.sagemaker_session
         )
