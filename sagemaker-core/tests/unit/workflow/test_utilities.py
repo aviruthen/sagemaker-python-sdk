@@ -250,6 +250,53 @@ class TestWorkflowUtilities:
         assert result is None
 
     def test_get_processing_code_hash_with_dependencies(self):
+
+    def test_get_processing_code_hash_with_none_dependencies_does_not_raise(self):
+        """Test get_processing_code_hash with None dependencies does not raise TypeError"""
+        result = get_processing_code_hash(
+            code=None, source_dir=None, dependencies=None
+        )
+        assert result is None
+
+    def test_get_processing_code_hash_with_none_dependencies_and_source_dir(self):
+        """Test get_processing_code_hash with None dependencies and source_dir"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            code_file = Path(temp_dir, "script.py")
+            code_file.write_text("print('hello')")
+
+            result = get_processing_code_hash(
+                code=str(code_file), source_dir=temp_dir, dependencies=None
+            )
+
+            assert result is not None
+            assert len(result) == 64
+
+    def test_get_processing_code_hash_with_none_dependencies_and_code_only(self):
+        """Test get_processing_code_hash with None dependencies and code only"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write("print('hello')")
+            temp_file = f.name
+
+        try:
+            result = get_processing_code_hash(code=temp_file, source_dir=None, dependencies=None)
+
+            assert result is not None
+            assert len(result) == 64
+        finally:
+            os.unlink(temp_file)
+
+    def test_get_processing_code_hash_with_none_dependencies_and_source_dir_and_code(self):
+        """Test get_processing_code_hash with None dependencies, source_dir and code"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            code_file = Path(temp_dir, "script.py")
+            code_file.write_text("print('hello')")
+
+            result = get_processing_code_hash(
+                code=str(code_file), source_dir=temp_dir, dependencies=None
+            )
+
+            assert result is not None
+            assert len(result) == 64
         """Test get_processing_code_hash with dependencies"""
         with tempfile.TemporaryDirectory() as temp_dir:
             code_file = Path(temp_dir, "script.py")
@@ -317,6 +364,35 @@ class TestWorkflowUtilities:
         assert result is None
 
     def test_get_training_code_hash_pipeline_variable(self):
+
+    def test_get_training_code_hash_with_none_dependencies_and_source_dir(self):
+        """Test get_training_code_hash with None dependencies and source_dir"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            entry_file = Path(temp_dir, "train.py")
+            entry_file.write_text("print('training')")
+
+            result = get_training_code_hash(
+                entry_point=str(entry_file), source_dir=temp_dir, dependencies=None
+            )
+
+            assert result is not None
+            assert len(result) == 64
+
+    def test_get_training_code_hash_with_none_dependencies_and_entry_point_only(self):
+        """Test get_training_code_hash with None dependencies and entry_point only"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write("print('training')")
+            temp_file = f.name
+
+        try:
+            result = get_training_code_hash(
+                entry_point=temp_file, source_dir=None, dependencies=None
+            )
+
+            assert result is not None
+            assert len(result) == 64
+        finally:
+            os.unlink(temp_file)
         """Test get_training_code_hash with pipeline variable returns None"""
         with patch("sagemaker.core.workflow.is_pipeline_variable", return_value=True):
             result = get_training_code_hash(
