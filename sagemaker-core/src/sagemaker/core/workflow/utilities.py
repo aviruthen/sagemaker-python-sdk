@@ -210,6 +210,9 @@ def get_processing_code_hash(code: str, source_dir: str, dependencies: List[str]
         str: A hash string representing the unique code artifact(s) for the step
     """
 
+    dependencies = dependencies or []
+
+
     # FrameworkProcessor
     if source_dir:
         source_dir_url = urlparse(source_dir)
@@ -245,6 +248,9 @@ def get_training_code_hash(
     Returns:
         str: A hash string representing the unique code artifact(s) for the step
     """
+    dependencies = dependencies or []
+
+
     from sagemaker.core.workflow import is_pipeline_variable
 
     if not is_pipeline_variable(source_dir) and not is_pipeline_variable(entry_point):
