@@ -197,6 +197,8 @@ def get_processing_dependencies(dependency_args: List[List[str]]) -> List[str]:
 
 
 def get_processing_code_hash(code: str, source_dir: str, dependencies: List[str]) -> str:
+    # Defensively handle None dependencies to prevent TypeError on list concatenation
+    dependencies = dependencies or []
     """Get the hash of a processing step's code artifact(s).
 
     Args:
