@@ -210,8 +210,6 @@ def get_processing_code_hash(code: str, source_dir: str, dependencies: List[str]
         str: A hash string representing the unique code artifact(s) for the step
     """
 
-    dependencies = dependencies or []
-
     # FrameworkProcessor
     if source_dir:
         source_dir_url = urlparse(source_dir)
