@@ -173,7 +173,7 @@ def get_code_hash(step: Entity) -> str:
         source_code = model_trainer.source_code
         if source_code:
             source_dir = source_code.source_dir
-            requirements = source_code.requirements
+            requirements = source_code.requirements or None
             entry_point = source_code.entry_script
             return get_training_code_hash(entry_point, source_dir, requirements)
     return None
@@ -248,6 +248,7 @@ def get_training_code_hash(
     from sagemaker.core.workflow import is_pipeline_variable
 
     if not is_pipeline_variable(source_dir) and not is_pipeline_variable(entry_point):
+        dependencies = dependencies or None
         if source_dir:
             source_dir_url = urlparse(source_dir)
             if source_dir_url.scheme == "" or source_dir_url.scheme == "file":
