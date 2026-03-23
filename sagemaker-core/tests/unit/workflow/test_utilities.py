@@ -264,6 +264,35 @@ class TestWorkflowUtilities:
 
             assert result is not None
 
+    def test_get_processing_code_hash_with_none_dependencies(self):
+        """Test get_processing_code_hash with None dependencies does not raise TypeError"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write("print('hello')")
+            temp_file = f.name
+
+        try:
+            # Should not raise TypeError: can only concatenate list (not 'NoneType') to list
+            result = get_processing_code_hash(code=temp_file, source_dir=None, dependencies=None)
+
+            assert result is not None
+            assert len(result) == 64
+        finally:
+            os.unlink(temp_file)
+
+    def test_get_processing_code_hash_with_none_dependencies_and_source_dir(self):
+        """Test get_processing_code_hash with None dependencies and source_dir"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            code_file = Path(temp_dir, "script.py")
+            code_file.write_text("print('hello')")
+
+            # Should not raise TypeError
+            result = get_processing_code_hash(
+                code=str(code_file), source_dir=temp_dir, dependencies=None
+            )
+
+            assert result is not None
+            assert len(result) == 64
+
     def test_get_training_code_hash_with_source_dir(self):
         """Test get_training_code_hash with source_dir"""
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -308,6 +337,32 @@ class TestWorkflowUtilities:
             assert len(result_with_deps) == 64
             assert result_no_deps != result_with_deps
 
+    def test_get_training_code_hash_with_none_dependencies_and_source_dir(self):
+        """Test get_training_code_hash with None dependencies and source_dir"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            entry_file = Path(temp_dir, "train.py")
+            entry_file.write_text("print('training')")
+
+            result = get_training_code_hash(
+                entry_point=str(entry_file), source_dir=temp_dir, dependencies=None
+            )
+
+            assert result is not None
+            assert len(result) == 64
+
+    def test_get_training_code_hash_with_none_dependencies_and_entry_point_only(self):
+        """Test get_training_code_hash with None dependencies and entry_point only"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            entry_file = Path(temp_dir, "train.py")
+            entry_file.write_text("print('training')")
+
+            result = get_training_code_hash(
+                entry_point=str(entry_file), source_dir=None, dependencies=None
+            )
+
+            assert result is not None
+            assert len(result) == 64
+
     def test_get_training_code_hash_s3_uri(self):
         """Test get_training_code_hash with S3 URI returns None"""
         result = get_training_code_hash(
@@ -324,6 +379,34 @@ class TestWorkflowUtilities:
             )
 
             assert result is None
+
+    @pytest.mark.skip(reason="Requires sagemaker-mlops module which is not installed in sagemaker-core tests")
+    def test_get_code_hash_training_step_with_no_requirements_in_source_code(self):
+        """Test get_code_hash for TrainingStep when SourceCode.requirements is None"""
+        from sagemaker.core.workflow.utilities import get_code_hash
+        from sagemaker.mlops.workflow.steps import TrainingStep
+        from sagemaker.core.training.configs import SourceCode
+
+        source_code = SourceCode(
+            source_dir="/tmp/source",
+            entry_script="train.py",
+            # requirements is not set, defaults to None
+        )
+
+        mock_model_trainer = Mock()
+        mock_model_trainer.source_code = source_code
+
+        mock_step_args = Mock()
+        mock_step_args.func_args = [mock_model_trainer]
+
+        mock_step = Mock(spec=TrainingStep)
+        mock_step.step_args = mock_step_args
+
+        with patch("sagemaker.core.workflow.utilities.get_training_code_hash") as mock_hash:
+            mock_hash.return_value = "abc123"
+            result = get_code_hash(mock_step)
+            mock_hash.assert_called_once_with("train.py", "/tmp/source", None)
+
 
     def test_validate_step_args_input_valid(self):
         """Test validate_step_args_input with valid input"""
