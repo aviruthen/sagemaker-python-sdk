@@ -211,7 +211,9 @@ def get_processing_code_hash(code: str, source_dir: str, dependencies: List[str]
     """
 
     # FrameworkProcessor
-    if source_dir:
+    dependencies = dependencies or []
+
+
         source_dir_url = urlparse(source_dir)
         if source_dir_url.scheme == "" or source_dir_url.scheme == "file":
             # Include code in the hash when possible
