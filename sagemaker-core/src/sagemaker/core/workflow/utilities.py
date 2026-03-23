@@ -173,6 +173,8 @@ def get_code_hash(step: Entity) -> str:
         source_code = model_trainer.source_code
         if source_code:
             source_dir = source_code.source_dir
+            # requirements may be None when SourceCode.requirements is not set;
+            # get_training_code_hash handles None dependencies gracefully
             requirements = source_code.requirements
             entry_point = source_code.entry_script
             return get_training_code_hash(entry_point, source_dir, requirements)
@@ -197,6 +199,7 @@ def get_processing_dependencies(dependency_args: List[List[str]]) -> List[str]:
 
 
 def get_processing_code_hash(code: str, source_dir: str, dependencies: List[str]) -> str:
+    dependencies = dependencies or []
     """Get the hash of a processing step's code artifact(s).
 
     Args:
