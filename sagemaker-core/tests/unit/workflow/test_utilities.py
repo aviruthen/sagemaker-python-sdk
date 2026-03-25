@@ -264,6 +264,48 @@ class TestWorkflowUtilities:
 
             assert result is not None
 
+    def test_get_processing_code_hash_with_none_dependencies(self):
+        """Test get_processing_code_hash with None dependencies does not raise TypeError"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write("print('hello')")
+            temp_file = f.name
+
+        try:
+            result = get_processing_code_hash(code=temp_file, source_dir=None, dependencies=None)
+
+            assert result is not None
+            assert len(result) == 64
+        finally:
+            os.unlink(temp_file)
+
+    def test_get_processing_code_hash_with_source_dir_and_none_dependencies(self):
+        """Test get_processing_code_hash with source_dir and None dependencies"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            code_file = Path(temp_dir, "script.py")
+            code_file.write_text("print('hello')")
+
+            result = get_processing_code_hash(
+                code=str(code_file), source_dir=temp_dir, dependencies=None
+            )
+
+            assert result is not None
+            assert len(result) == 64
+
+    def test_get_processing_code_hash_with_code_only_and_none_dependencies(self):
+        """Test get_processing_code_hash with code only and None dependencies"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write("print('hello')")
+            temp_file = f.name
+
+        try:
+            # Ensure no TypeError when dependencies is None
+            result = get_processing_code_hash(code=temp_file, source_dir=None, dependencies=None)
+
+            assert result is not None
+            assert len(result) == 64
+        finally:
+            os.unlink(temp_file)
+
     def test_get_training_code_hash_with_source_dir(self):
         """Test get_training_code_hash with source_dir"""
         with tempfile.TemporaryDirectory() as temp_dir:

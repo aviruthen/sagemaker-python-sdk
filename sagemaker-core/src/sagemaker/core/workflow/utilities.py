@@ -149,6 +149,8 @@ def get_code_hash(step: Entity) -> str:
     Returns:
         str: A hash string representing the unique code artifact(s) for the step
     """
+
+    dependencies = dependencies or []
     from sagemaker.mlops.workflow.steps import ProcessingStep, TrainingStep
 
     if isinstance(step, ProcessingStep) and step.step_args:
