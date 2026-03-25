@@ -17,7 +17,6 @@ import os
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 from sagemaker.core.workflow.utilities import (
-    get_code_hash,
     list_to_request,
     hash_file,
     hash_files_or_dirs,
@@ -226,61 +225,6 @@ class TestWorkflowUtilities:
             )
 
             assert result is not None
-
-    def test_get_processing_code_hash_with_source_dir_and_none_dependencies(self):
-        """Test get_processing_code_hash with source_dir and dependencies=None"""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            code_file = Path(temp_dir, "script.py")
-            code_file.write_text("print('hello')")
-
-            result = get_processing_code_hash(
-                code=str(code_file), source_dir=temp_dir, dependencies=None
-            )
-
-            assert result is not None
-            assert len(result) == 64
-
-    def test_get_processing_code_hash_with_code_only_and_none_dependencies(self):
-        """Test get_processing_code_hash with code only and dependencies=None"""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write("print('hello')")
-            temp_file = f.name
-
-        try:
-            result = get_processing_code_hash(code=temp_file, source_dir=None, dependencies=None)
-
-            assert result is not None
-            assert len(result) == 64
-        finally:
-            os.unlink(temp_file)
-
-    @pytest.mark.skip(reason="Requires sagemaker-mlops module which is not installed in sagemaker-core tests")
-    def test_get_code_hash_with_training_step_none_requirements(self):
-        """Test get_code_hash with a TrainingStep whose source_code.requirements is None"""
-        from sagemaker.mlops.workflow.steps import TrainingStep
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            entry_file = Path(temp_dir, "train.py")
-            entry_file.write_text("print('training')")
-
-            mock_source_code = Mock()
-            mock_source_code.source_dir = temp_dir
-            mock_source_code.requirements = None
-            mock_source_code.entry_script = str(entry_file)
-
-            mock_model_trainer = Mock()
-            mock_model_trainer.source_code = mock_source_code
-
-            mock_step_args = Mock()
-            mock_step_args.func_args = [mock_model_trainer]
-
-            step = Mock(spec=TrainingStep)
-            step.step_args = mock_step_args
-
-            result = get_code_hash(step)
-
-            assert result is not None
-            assert len(result) == 64
             assert len(result) == 64
 
     def test_get_processing_code_hash_code_only(self):
@@ -296,6 +240,34 @@ class TestWorkflowUtilities:
             assert len(result) == 64
         finally:
             os.unlink(temp_file)
+
+    def test_get_processing_code_hash_with_none_dependencies_and_source_dir(self):
+        """Test get_processing_code_hash with None dependencies and source_dir"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            code_file = Path(temp_dir, "script.py")
+            code_file.write_text("print('hello')")
+
+            result = get_processing_code_hash(
+                code=str(code_file), source_dir=temp_dir, dependencies=None
+            )
+
+            assert result is not None
+            assert len(result) == 64
+
+    def test_get_processing_code_hash_with_none_dependencies_and_code_only(self):
+        """Test get_processing_code_hash with None dependencies and code only"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write("print('hello')")
+            temp_file = f.name
+
+        try:
+            result = get_processing_code_hash(code=temp_file, source_dir=None, dependencies=None)
+
+            assert result is not None
+            assert len(result) == 64
+        finally:
+            os.unlink(temp_file)
+
 
     def test_get_processing_code_hash_s3_uri(self):
         """Test get_processing_code_hash with S3 URI returns None"""
@@ -363,6 +335,47 @@ class TestWorkflowUtilities:
             assert len(result_no_deps) == 64
             assert len(result_with_deps) == 64
             assert result_no_deps != result_with_deps
+
+    def test_get_code_hash_training_step_with_none_requirements(self):
+        """Test get_code_hash with TrainingStep whose source_code has requirements=None"""
+        from sagemaker.core.workflow.utilities import get_code_hash
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            entry_file = Path(temp_dir, "train.py")
+            entry_file.write_text("print('training')")
+
+            mock_source_code = Mock()
+            mock_source_code.source_dir = temp_dir
+            mock_source_code.requirements = None
+            mock_source_code.entry_script = str(entry_file)
+
+            mock_model_trainer = Mock()
+            mock_model_trainer.source_code = mock_source_code
+
+            mock_step_args = Mock()
+            mock_step_args.func_args = [mock_model_trainer]
+
+            mock_step = Mock()
+            mock_step.step_args = mock_step_args
+
+            with patch("sagemaker.core.workflow.utilities.isinstance") as mock_isinstance:
+                def isinstance_side_effect(obj, cls):
+                    from sagemaker.mlops.workflow.steps import TrainingStep, ProcessingStep
+                    if cls is ProcessingStep:
+                        return False
+                    if cls is TrainingStep:
+                        return obj is mock_step
+                    return builtins_isinstance(obj, cls)
+
+                import builtins
+                builtins_isinstance = builtins.isinstance
+                mock_isinstance.side_effect = isinstance_side_effect
+
+                result = get_code_hash(mock_step)
+
+            assert result is not None
+            assert len(result) == 64
+
 
     def test_get_training_code_hash_s3_uri(self):
         """Test get_training_code_hash with S3 URI returns None"""

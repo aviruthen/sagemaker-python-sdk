@@ -149,8 +149,6 @@ def get_code_hash(step: Entity) -> str:
     Returns:
         str: A hash string representing the unique code artifact(s) for the step
     """
-
-    dependencies = dependencies or []
     from sagemaker.mlops.workflow.steps import ProcessingStep, TrainingStep
 
     if isinstance(step, ProcessingStep) and step.step_args:
@@ -175,7 +173,7 @@ def get_code_hash(step: Entity) -> str:
         source_code = model_trainer.source_code
         if source_code:
             source_dir = source_code.source_dir
-            requirements = source_code.requirements
+            requirements = source_code.requirements or []
             entry_point = source_code.entry_script
             return get_training_code_hash(entry_point, source_dir, requirements)
     return None
@@ -211,6 +209,7 @@ def get_processing_code_hash(code: str, source_dir: str, dependencies: List[str]
     Returns:
         str: A hash string representing the unique code artifact(s) for the step
     """
+    dependencies = dependencies or []
 
     # FrameworkProcessor
     if source_dir:
