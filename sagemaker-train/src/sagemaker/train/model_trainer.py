@@ -410,7 +410,7 @@ class ModelTrainer(BaseModel):
                 self._temp_code_dir.cleanup()
 
     def _validate_training_image_and_algorithm_name(
-        self, training_image: Optional[str], algorithm_name: Optional[str]
+        self, training_image, algorithm_name
     ):
         """Validate that only one of 'training_image' or 'algorithm_name' is provided."""
         from sagemaker.core.helper.pipeline_variable import PipelineVariable

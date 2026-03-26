@@ -83,10 +83,16 @@ class TrainDefaults:
     ) -> str:
         """Get the default base job name."""
         if base_job_name is None:
-            if algorithm_name:
+            if algorithm_name and isinstance(algorithm_name, str):
                 base_job_name = f"{algorithm_name}-job"
             elif training_image:
-                base_job_name = f"{_get_repo_name_from_image(training_image)}-job"
+                repo_name = _get_repo_name_from_image(training_image)
+                if repo_name:
+                    base_job_name = f"{repo_name}-job"
+                else:
+                    base_job_name = "training-job"
+            if base_job_name is None:
+                base_job_name = "training-job"
             logger.info(f"Base name not provided. Using default name:\n{base_job_name}")
         return base_job_name
 
