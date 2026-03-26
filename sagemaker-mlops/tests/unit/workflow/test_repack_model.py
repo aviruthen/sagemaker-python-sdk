@@ -217,3 +217,28 @@ def test_custom_extractall_tarfile_without_data_filter():
             call_args = mock_tar.extractall.call_args
             assert call_args[1]['path'] == extract_path
             assert 'members' in call_args[1]
+
+
+def test_is_bad_path_with_dotdot_traversal():
+    """Test _is_bad_path correctly identifies directory traversal with '..'."""
+    base = _get_resolved_path("/tmp/safe_base")
+    # A path that tries to escape via ..
+    assert _is_bad_path("../../etc/passwd", base) is True
+
+
+def test_is_bad_path_with_absolute_escape():
+    """Test _is_bad_path correctly identifies absolute path escape."""
+    base = _get_resolved_path("/tmp/safe_base")
+    assert _is_bad_path("/etc/passwd", base) is True
+
+
+def test_is_bad_path_nested_safe():
+    """Test _is_bad_path allows nested safe paths."""
+    base = _get_resolved_path("/tmp/safe_base")
+    assert _is_bad_path("subdir/file.txt", base) is False
+
+
+def test_get_safe_members_empty_list():
+    """Test _get_safe_members with empty member list."""
+    safe_members = list(_get_safe_members([], "/tmp/extract"))
+    assert len(safe_members) == 0

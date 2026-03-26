@@ -36,6 +36,8 @@ __all__ = [
     "sagemaker_timestamp",
     "sagemaker_short_timestamp",
     "get_config_value",
+    "_validate_source_directory",
+    "_validate_dependency_path",
 ]
 
 
