@@ -78,8 +78,8 @@ class TrainDefaults:
     @staticmethod
     def get_base_job_name(
         base_job_name: Optional[str] = None,
-        algorithm_name: Optional[str] = None,
-        training_image: Optional[str] = None,
+        algorithm_name=None,
+        training_image=None,
     ) -> str:
         """Get the default base job name."""
         if base_job_name is None:

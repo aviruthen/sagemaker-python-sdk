@@ -413,11 +413,19 @@ class ModelTrainer(BaseModel):
         self, training_image: Optional[str], algorithm_name: Optional[str]
     ):
         """Validate that only one of 'training_image' or 'algorithm_name' is provided."""
-        if not training_image and not algorithm_name:
+        from sagemaker.core.helper.pipeline_variable import PipelineVariable
+
+        has_training_image = training_image is not None and (
+            isinstance(training_image, PipelineVariable) or bool(training_image)
+        )
+        has_algorithm_name = algorithm_name is not None and (
+            isinstance(algorithm_name, PipelineVariable) or bool(algorithm_name)
+        )
+        if not has_training_image and not has_algorithm_name:
             raise ValueError(
                 "Atleast one of 'training_image' or 'algorithm_name' must be provided.",
             )
-        if training_image and algorithm_name:
+        if has_training_image and has_algorithm_name:
             raise ValueError(
                 "Only one of 'training_image' or 'algorithm_name' must be provided.",
             )
