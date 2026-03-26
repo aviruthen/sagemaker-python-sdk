@@ -23,6 +23,8 @@ from pathlib import Path
 from datetime import datetime
 from typing import Literal, Any
 
+from typing import Union
+
 from sagemaker.core.helper.session_helper import Session
 from sagemaker.core.shapes import Unassigned
 from sagemaker.train import logger
@@ -144,7 +146,7 @@ def _get_unique_name(base, max_length=63):
     return unique_name
 
 
-def _get_repo_name_from_image(image: "str | PipelineVariable") -> str:
+def _get_repo_name_from_image(image: Union[str, PipelineVariable]) -> str:
     """Get the repository name from the image URI.
 
     Example:
@@ -154,7 +156,7 @@ def _get_repo_name_from_image(image: "str | PipelineVariable") -> str:
     ```
 
     Args:
-        image (str or PipelineVariable): The image URI
+        image (str or PipelineVariable): The image URI.
 
     Returns:
         str: The repository name

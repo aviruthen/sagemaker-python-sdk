@@ -411,11 +411,13 @@ class ModelTrainer(BaseModel):
 
     def _validate_training_image_and_algorithm_name(
         self,
-        training_image: "str | PipelineVariable | None",
-        algorithm_name: "str | PipelineVariable | None",
+        training_image: Optional[StrPipeVar],
+        algorithm_name: Optional[StrPipeVar],
     ):
         """Validate that only one of 'training_image' or 'algorithm_name' is provided."""
-        # PipelineVariables are truthy for validation purposes
+        # PipelineVariable objects do not support standard boolean coercion
+        # (__bool__ raises TypeError), so we use isinstance checks to detect
+        # them as truthy values during validation.
         has_image = isinstance(training_image, PipelineVariable) or bool(training_image)
         has_algo = isinstance(algorithm_name, PipelineVariable) or bool(algorithm_name)
         if not has_image and not has_algo:
@@ -552,7 +554,10 @@ class ModelTrainer(BaseModel):
 
         if self.training_image:
             if isinstance(self.training_image, PipelineVariable):
-                logger.info("Training image URI: (PipelineVariable - resolved at pipeline execution)")
+                logger.info(
+                    "Training image URI: "
+                    "(PipelineVariable - resolved at pipeline execution)"
+                )
             else:
                 logger.info(f"Training image URI: {self.training_image}")
     

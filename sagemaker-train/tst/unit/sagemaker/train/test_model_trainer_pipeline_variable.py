@@ -11,14 +11,26 @@
 # ANY KIND, either express or implied. See the License for the specific
 # language governing permissions and limitations under the License.
 """Tests for PipelineVariable support in ModelTrainer."""
-from __future__ import absolute_import
+from __future__ import annotations
 
 import pytest
 from unittest.mock import MagicMock, patch
 
-from sagemaker.core.workflow.parameters import ParameterString, ParameterInteger
+from sagemaker.core.workflow.parameters import (
+    ParameterString,
+    ParameterInteger,
+)
 from sagemaker.core.helper.pipeline_variable import PipelineVariable
-from sagemaker.train.utils import safe_serialize, _get_repo_name_from_image, _PIPELINE_VARIABLE_IMAGE_PLACEHOLDER
+from sagemaker.train.utils import (
+    safe_serialize,
+    _get_repo_name_from_image,
+    _PIPELINE_VARIABLE_IMAGE_PLACEHOLDER,
+)
+
+_TEST_IMAGE_URI = (
+    "683313688378.dkr.ecr.us-east-1.amazonaws.com/"
+    "sagemaker-xgboost:1.0-1-cpu-py3"
+)
 
 
 class TestSafeSerializeWithPipelineVariable:
@@ -63,13 +75,14 @@ class TestGetRepoNameFromImage:
 
     def test_get_repo_name_from_image_string(self):
         """Test that a normal image URI returns the repo name."""
-        image = "683313688378.dkr.ecr.us-east-1.amazonaws.com/sagemaker-xgboost:1.0-1-cpu-py3"
-        result = _get_repo_name_from_image(image)
+        result = _get_repo_name_from_image(_TEST_IMAGE_URI)
         assert result == "sagemaker-xgboost"
 
     def test_get_repo_name_from_image_pipeline_variable(self):
         """Test that a PipelineVariable returns the placeholder constant."""
-        param = ParameterString(name="TrainingImage", default_value="some-image")
+        param = ParameterString(
+            name="TrainingImage", default_value="some-image"
+        )
         result = _get_repo_name_from_image(param)
         assert result == _PIPELINE_VARIABLE_IMAGE_PLACEHOLDER
 
@@ -80,159 +93,189 @@ class TestGetRepoNameFromImage:
 
     def test_get_repo_name_from_image_with_digest(self):
         """Test with an image URI containing a digest."""
-        image = "123456789012.dkr.ecr.us-west-2.amazonaws.com/my-repo@sha256:abc123"
+        image = (
+            "123456789012.dkr.ecr.us-west-2.amazonaws.com/"
+            "my-repo@sha256:abc123"
+        )
         result = _get_repo_name_from_image(image)
         assert result == "my-repo"
+
+
+@pytest.fixture
+def mock_session():
+    """Create a mock SageMaker session."""
+    session = MagicMock()
+    session.boto_region_name = "us-east-1"
+    session.default_bucket.return_value = "my-bucket"
+    session.default_bucket_prefix = None
+    return session
+
+
+@pytest.fixture
+def mock_train_defaults():
+    """Patch TrainDefaults for ModelTrainer construction."""
+    with patch("sagemaker.train.model_trainer.TrainDefaults") as mock_defaults:
+        from sagemaker.train.configs import Compute
+
+        mock_defaults.get_sagemaker_session.return_value = MagicMock()
+        mock_defaults.get_role.return_value = (
+            "arn:aws:iam::123456789012:role/SageMakerRole"
+        )
+        mock_defaults.get_base_job_name.return_value = "test-job"
+        mock_defaults.get_compute.return_value = Compute(
+            instance_type="ml.m5.xlarge", instance_count=1
+        )
+        mock_defaults.get_stopping_condition.return_value = MagicMock()
+        mock_defaults.get_output_data_config.return_value = MagicMock()
+        yield mock_defaults
 
 
 class TestModelTrainerValidationWithPipelineVariable:
     """Tests for ModelTrainer validation with PipelineVariable objects."""
 
-    @patch("sagemaker.train.model_trainer.TrainDefaults")
-    def test_training_image_accepts_parameter_string(self, mock_defaults):
+    def test_training_image_accepts_parameter_string(
+        self, mock_session, mock_train_defaults
+    ):
         """Test that training_image accepts ParameterString."""
         from sagemaker.train.model_trainer import ModelTrainer
         from sagemaker.train.configs import Compute
 
-        mock_session = MagicMock()
-        mock_session.boto_region_name = "us-east-1"
-        mock_session.default_bucket.return_value = "my-bucket"
-        mock_session.default_bucket_prefix = None
-
-        mock_defaults.get_sagemaker_session.return_value = mock_session
-        mock_defaults.get_role.return_value = "arn:aws:iam::123456789012:role/SageMakerRole"
-        mock_defaults.get_base_job_name.return_value = "test-job"
-        mock_defaults.get_compute.return_value = Compute(
-            instance_type="ml.m5.xlarge", instance_count=1
+        param = ParameterString(
+            name="TrainingImage", default_value="some-image-uri"
         )
-        mock_defaults.get_stopping_condition.return_value = MagicMock()
-        mock_defaults.get_output_data_config.return_value = MagicMock()
-
-        param = ParameterString(name="TrainingImage", default_value="some-image-uri")
 
         # Should not raise
         trainer = ModelTrainer(
             training_image=param,
-            compute=Compute(instance_type="ml.m5.xlarge", instance_count=1),
+            compute=Compute(
+                instance_type="ml.m5.xlarge", instance_count=1
+            ),
             sagemaker_session=mock_session,
             role="arn:aws:iam::123456789012:role/SageMakerRole",
         )
         assert trainer.training_image is param
 
-    @patch("sagemaker.train.model_trainer.TrainDefaults")
-    def test_algorithm_name_accepts_parameter_string(self, mock_defaults):
+    def test_algorithm_name_accepts_parameter_string(
+        self, mock_session, mock_train_defaults
+    ):
         """Test that algorithm_name accepts ParameterString."""
         from sagemaker.train.model_trainer import ModelTrainer
         from sagemaker.train.configs import Compute
 
-        mock_session = MagicMock()
-        mock_session.boto_region_name = "us-east-1"
-        mock_session.default_bucket.return_value = "my-bucket"
-        mock_session.default_bucket_prefix = None
-
-        mock_defaults.get_sagemaker_session.return_value = mock_session
-        mock_defaults.get_role.return_value = "arn:aws:iam::123456789012:role/SageMakerRole"
-        mock_defaults.get_base_job_name.return_value = "test-job"
-        mock_defaults.get_compute.return_value = Compute(
-            instance_type="ml.m5.xlarge", instance_count=1
+        param = ParameterString(
+            name="AlgorithmName", default_value="some-algo"
         )
-        mock_defaults.get_stopping_condition.return_value = MagicMock()
-        mock_defaults.get_output_data_config.return_value = MagicMock()
-
-        param = ParameterString(name="AlgorithmName", default_value="some-algo")
 
         # Should not raise
         trainer = ModelTrainer(
             algorithm_name=param,
-            compute=Compute(instance_type="ml.m5.xlarge", instance_count=1),
+            compute=Compute(
+                instance_type="ml.m5.xlarge", instance_count=1
+            ),
             sagemaker_session=mock_session,
             role="arn:aws:iam::123456789012:role/SageMakerRole",
         )
         assert trainer.algorithm_name is param
 
-    @patch("sagemaker.train.model_trainer.TrainDefaults")
-    def test_environment_values_accept_parameter_string(self, mock_defaults):
+    def test_environment_values_accept_parameter_string(
+        self, mock_session, mock_train_defaults
+    ):
         """Test that environment dict values accept ParameterString."""
         from sagemaker.train.model_trainer import ModelTrainer
         from sagemaker.train.configs import Compute
 
-        mock_session = MagicMock()
-        mock_session.boto_region_name = "us-east-1"
-        mock_session.default_bucket.return_value = "my-bucket"
-        mock_session.default_bucket_prefix = None
-
-        mock_defaults.get_sagemaker_session.return_value = mock_session
-        mock_defaults.get_role.return_value = "arn:aws:iam::123456789012:role/SageMakerRole"
-        mock_defaults.get_base_job_name.return_value = "test-job"
-        mock_defaults.get_compute.return_value = Compute(
-            instance_type="ml.m5.xlarge", instance_count=1
+        env_param = ParameterString(
+            name="EnvValue", default_value="val"
         )
-        mock_defaults.get_stopping_condition.return_value = MagicMock()
-        mock_defaults.get_output_data_config.return_value = MagicMock()
-
-        env_param = ParameterString(name="EnvValue", default_value="val")
 
         # Should not raise
         trainer = ModelTrainer(
-            training_image="683313688378.dkr.ecr.us-east-1.amazonaws.com/sagemaker-xgboost:1.0-1-cpu-py3",
-            compute=Compute(instance_type="ml.m5.xlarge", instance_count=1),
+            training_image=_TEST_IMAGE_URI,
+            compute=Compute(
+                instance_type="ml.m5.xlarge", instance_count=1
+            ),
             sagemaker_session=mock_session,
             role="arn:aws:iam::123456789012:role/SageMakerRole",
             environment={"MY_VAR": env_param},
         )
         assert trainer.environment["MY_VAR"] is env_param
 
-    @patch("sagemaker.train.model_trainer.TrainDefaults")
-    def test_plain_string_values_still_work(self, mock_defaults):
+    def test_plain_string_values_still_work(
+        self, mock_session, mock_train_defaults
+    ):
         """Regression test: plain string values continue to work."""
         from sagemaker.train.model_trainer import ModelTrainer
         from sagemaker.train.configs import Compute
 
-        mock_session = MagicMock()
-        mock_session.boto_region_name = "us-east-1"
-        mock_session.default_bucket.return_value = "my-bucket"
-        mock_session.default_bucket_prefix = None
-
-        mock_defaults.get_sagemaker_session.return_value = mock_session
-        mock_defaults.get_role.return_value = "arn:aws:iam::123456789012:role/SageMakerRole"
-        mock_defaults.get_base_job_name.return_value = "test-job"
-        mock_defaults.get_compute.return_value = Compute(
-            instance_type="ml.m5.xlarge", instance_count=1
-        )
-        mock_defaults.get_stopping_condition.return_value = MagicMock()
-        mock_defaults.get_output_data_config.return_value = MagicMock()
-
         # Should not raise
         trainer = ModelTrainer(
-            training_image="683313688378.dkr.ecr.us-east-1.amazonaws.com/sagemaker-xgboost:1.0-1-cpu-py3",
-            compute=Compute(instance_type="ml.m5.xlarge", instance_count=1),
+            training_image=_TEST_IMAGE_URI,
+            compute=Compute(
+                instance_type="ml.m5.xlarge", instance_count=1
+            ),
             sagemaker_session=mock_session,
             role="arn:aws:iam::123456789012:role/SageMakerRole",
         )
-        assert trainer.training_image == "683313688378.dkr.ecr.us-east-1.amazonaws.com/sagemaker-xgboost:1.0-1-cpu-py3"
+        assert trainer.training_image == _TEST_IMAGE_URI
+
+    def test_validation_accepts_pipeline_variable_image_none_algo(self):
+        """Test validation accepts PipelineVariable image with None algorithm."""
+        from sagemaker.train.model_trainer import ModelTrainer
+
+        trainer = ModelTrainer.__new__(ModelTrainer)
+        param = ParameterString(
+            name="Image", default_value="img"
+        )
+        # Should not raise
+        trainer._validate_training_image_and_algorithm_name(
+            param, None
+        )
+
+    def test_validation_accepts_none_image_pipeline_variable_algo(self):
+        """Test validation accepts None image with PipelineVariable algorithm."""
+        from sagemaker.train.model_trainer import ModelTrainer
+
+        trainer = ModelTrainer.__new__(ModelTrainer)
+        param = ParameterString(
+            name="Algo", default_value="algo"
+        )
+        # Should not raise
+        trainer._validate_training_image_and_algorithm_name(
+            None, param
+        )
 
     def test_validation_rejects_no_image_or_algorithm(self):
-        """Test that validation rejects when neither training_image nor algorithm_name is provided."""
+        """Test that validation rejects when neither is provided."""
         from sagemaker.train.model_trainer import ModelTrainer
 
         trainer = ModelTrainer.__new__(ModelTrainer)
         with pytest.raises(ValueError, match="Atleast one of"):
-            trainer._validate_training_image_and_algorithm_name(None, None)
+            trainer._validate_training_image_and_algorithm_name(
+                None, None
+            )
 
     def test_validation_rejects_both_image_and_algorithm(self):
-        """Test that validation rejects when both training_image and algorithm_name are provided."""
+        """Test that validation rejects when both are provided."""
         from sagemaker.train.model_trainer import ModelTrainer
 
         trainer = ModelTrainer.__new__(ModelTrainer)
         with pytest.raises(ValueError, match="Only one of"):
-            trainer._validate_training_image_and_algorithm_name("image", "algo")
+            trainer._validate_training_image_and_algorithm_name(
+                "image", "algo"
+            )
 
     def test_validation_rejects_both_pipeline_variables(self):
         """Test that validation rejects when both are PipelineVariables."""
         from sagemaker.train.model_trainer import ModelTrainer
 
         trainer = ModelTrainer.__new__(ModelTrainer)
-        img_param = ParameterString(name="Image", default_value="img")
-        algo_param = ParameterString(name="Algo", default_value="algo")
+        img_param = ParameterString(
+            name="Image", default_value="img"
+        )
+        algo_param = ParameterString(
+            name="Algo", default_value="algo"
+        )
         with pytest.raises(ValueError, match="Only one of"):
-            trainer._validate_training_image_and_algorithm_name(img_param, algo_param)
+            trainer._validate_training_image_and_algorithm_name(
+                img_param, algo_param
+            )
