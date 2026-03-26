@@ -142,7 +142,7 @@ def _get_unique_name(base, max_length=63):
     return unique_name
 
 
-def _get_repo_name_from_image(image: str) -> str:
+def _get_repo_name_from_image(image) -> str:
     """Get the repository name from the image URI.
 
     Example:
@@ -152,11 +152,13 @@ def _get_repo_name_from_image(image: str) -> str:
     ```
 
     Args:
-        image (str): The image URI
+        image: The image URI (str or PipelineVariable)
 
     Returns:
         str: The repository name
     """
+    if isinstance(image, PipelineVariable):
+        return "pipeline-variable-image"
     return image.split("/")[-1].split(":")[0].split("@")[0]
 
 

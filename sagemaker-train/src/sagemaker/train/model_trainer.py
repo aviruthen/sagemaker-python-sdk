@@ -410,14 +410,18 @@ class ModelTrainer(BaseModel):
                 self._temp_code_dir.cleanup()
 
     def _validate_training_image_and_algorithm_name(
-        self, training_image: Optional[str], algorithm_name: Optional[str]
+        self, training_image, algorithm_name
     ):
         """Validate that only one of 'training_image' or 'algorithm_name' is provided."""
-        if not training_image and not algorithm_name:
+        from sagemaker.core.helper.pipeline_variable import PipelineVariable as _PV
+        # PipelineVariables are truthy for validation purposes
+        has_image = isinstance(training_image, _PV) or bool(training_image)
+        has_algo = isinstance(algorithm_name, _PV) or bool(algorithm_name)
+        if not has_image and not has_algo:
             raise ValueError(
                 "Atleast one of 'training_image' or 'algorithm_name' must be provided.",
             )
-        if training_image and algorithm_name:
+        if has_image and has_algo:
             raise ValueError(
                 "Only one of 'training_image' or 'algorithm_name' must be provided.",
             )
