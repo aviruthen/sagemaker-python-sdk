@@ -28,6 +28,8 @@ from sagemaker.core.shapes import Unassigned
 from sagemaker.train import logger
 from sagemaker.core.workflow.parameters import PipelineVariable
 
+_PIPELINE_VARIABLE_IMAGE_PLACEHOLDER = "pipeline-variable-image"
+
 
 def _default_bucket_and_prefix(session: Session) -> str:
     """Helper function to get the bucket name with the corresponding prefix if applicable
@@ -142,7 +144,7 @@ def _get_unique_name(base, max_length=63):
     return unique_name
 
 
-def _get_repo_name_from_image(image) -> str:
+def _get_repo_name_from_image(image: "str | PipelineVariable") -> str:
     """Get the repository name from the image URI.
 
     Example:
@@ -152,13 +154,13 @@ def _get_repo_name_from_image(image) -> str:
     ```
 
     Args:
-        image: The image URI (str or PipelineVariable)
+        image (str or PipelineVariable): The image URI
 
     Returns:
         str: The repository name
     """
     if isinstance(image, PipelineVariable):
-        return "pipeline-variable-image"
+        return _PIPELINE_VARIABLE_IMAGE_PLACEHOLDER
     return image.split("/")[-1].split(":")[0].split("@")[0]
 
 

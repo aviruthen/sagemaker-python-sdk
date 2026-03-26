@@ -116,7 +116,7 @@ from sagemaker.core.jumpstart.document import get_hub_content_and_document
 from sagemaker.core.jumpstart.utils import get_eula_url
 from sagemaker.train.defaults import TrainDefaults, JumpStartTrainDefaults
 from sagemaker.core.workflow.pipeline_context import PipelineSession, runnable_by_pipeline
-from sagemaker.core.helper.pipeline_variable import StrPipeVar
+from sagemaker.core.helper.pipeline_variable import PipelineVariable, StrPipeVar
 
 from sagemaker.train.local.local_container import _LocalContainer
 
@@ -410,13 +410,14 @@ class ModelTrainer(BaseModel):
                 self._temp_code_dir.cleanup()
 
     def _validate_training_image_and_algorithm_name(
-        self, training_image, algorithm_name
+        self,
+        training_image: "str | PipelineVariable | None",
+        algorithm_name: "str | PipelineVariable | None",
     ):
         """Validate that only one of 'training_image' or 'algorithm_name' is provided."""
-        from sagemaker.core.helper.pipeline_variable import PipelineVariable as _PV
         # PipelineVariables are truthy for validation purposes
-        has_image = isinstance(training_image, _PV) or bool(training_image)
-        has_algo = isinstance(algorithm_name, _PV) or bool(algorithm_name)
+        has_image = isinstance(training_image, PipelineVariable) or bool(training_image)
+        has_algo = isinstance(algorithm_name, PipelineVariable) or bool(algorithm_name)
         if not has_image and not has_algo:
             raise ValueError(
                 "Atleast one of 'training_image' or 'algorithm_name' must be provided.",
@@ -550,7 +551,6 @@ class ModelTrainer(BaseModel):
             )
 
         if self.training_image:
-            from sagemaker.core.helper.pipeline_variable import PipelineVariable
             if isinstance(self.training_image, PipelineVariable):
                 logger.info("Training image URI: (PipelineVariable - resolved at pipeline execution)")
             else:
