@@ -15,6 +15,11 @@
 which is used for Amazon SageMaker Processing Jobs. These jobs let users perform
 data pre-processing, post-processing, feature engineering, data validation, and model evaluation,
 and interpretation on Amazon SageMaker.
+
+``ProcessingInput`` supports local file paths via the ``s3_input.s3_uri`` field.
+When a local path is provided, it is automatically uploaded to S3 during input
+normalization. For a convenient way to create ``ProcessingInput`` objects from
+local sources, use the :func:`processing_input_from_local` helper function.
 """
 from __future__ import absolute_import
 
@@ -83,6 +88,105 @@ from sagemaker.core.config.config_utils import _append_sagemaker_config_tags
 from sagemaker.core.utils.utils import serialize
 
 logger = logging.getLogger(__name__)
+
+
+def processing_input_from_local(
+    source: str,
+    destination: str,
+    input_name: Optional[str] = None,
+    s3_data_type: str = "S3Prefix",
+    s3_input_mode: str = "File",
+    s3_data_distribution_type: Optional[str] = None,
+    s3_compression_type: Optional[str] = None,
+) -> ProcessingInput:
+    """Creates a ProcessingInput from a local file/directory path or S3 URI.
+
+    This is a convenience factory function that provides V2-like ergonomics
+    for creating ``ProcessingInput`` objects. When a local path is provided
+    as ``source``, it will be automatically uploaded to S3 during input
+    normalization in ``Processor.run()``.
+
+    Args:
+        source: Local file/directory path or S3 URI. If a local path is
+            provided, it must exist and will be uploaded to S3 automatically
+            when the processing job is run.
+        destination: The container path where the input data will be
+            available, e.g. ``/opt/ml/processing/input/data``.
+        input_name: A name for the processing input. If not specified,
+            one will be auto-generated during normalization.
+        s3_data_type: The S3 data type. Valid values: ``'S3Prefix'``,
+            ``'ManifestFile'`` (default: ``'S3Prefix'``).
+        s3_input_mode: The input mode. Valid values: ``'File'``,
+            ``'Pipe'`` (default: ``'File'``).
+        s3_data_distribution_type: The data distribution type for
+            distributed processing. Valid values:
+            ``'FullyReplicated'``, ``'ShardedByS3Key'``
+            (default: None).
+        s3_compression_type: The compression type. Valid values:
+            ``'None'``, ``'Gzip'`` (default: None).
+
+    Returns:
+        ProcessingInput: A ``ProcessingInput`` object configured with the
+            given source and destination.
+
+    Raises:
+        ValueError: If ``source`` is a local path that does not exist.
+        ValueError: If ``source`` is empty or None.
+
+    Examples:
+        Create an input from a local directory::
+
+            from sagemaker.core.processing import processing_input_from_local
+
+            input_data = processing_input_from_local(
+                source="/local/data/training",
+                destination="/opt/ml/processing/input/data",
+                input_name="training-data",
+            )
+            processor.run(inputs=[input_data])
+
+        Create an input from an S3 URI::
+
+            input_data = processing_input_from_local(
+                source="s3://my-bucket/data/training",
+                destination="/opt/ml/processing/input/data",
+            )
+    """
+    if not source:
+        raise ValueError(
+            f"source must be a valid local path or S3 URI, got: {source!r}"
+        )
+
+    # Check if source is a local path (not an S3 URI)
+    parse_result = urlparse(source)
+    if parse_result.scheme not in ("s3", "http", "https"):
+        # Treat as local path - validate existence
+        local_path = source
+        if parse_result.scheme == "file":
+            local_path = url2pathname(parse_result.path)
+        if not os.path.exists(local_path):
+            raise ValueError(
+                f"Input source path does not exist: {source!r}. "
+                f"Please provide a valid local path or S3 URI."
+            )
+
+    s3_input_kwargs = {
+        "s3_uri": source,
+        "local_path": destination,
+        "s3_data_type": s3_data_type,
+        "s3_input_mode": s3_input_mode,
+    }
+    if s3_data_distribution_type is not None:
+        s3_input_kwargs["s3_data_distribution_type"] = s3_data_distribution_type
+    if s3_compression_type is not None:
+        s3_input_kwargs["s3_compression_type"] = s3_compression_type
+
+    s3_input = ProcessingS3Input(**s3_input_kwargs)
+
+    return ProcessingInput(
+        input_name=input_name,
+        s3_input=s3_input,
+    )
 
 
 class Processor(object):
@@ -424,6 +528,16 @@ class Processor(object):
                 # If the s3_uri is not an s3_uri, create one.
                 parse_result = urlparse(file_input.s3_input.s3_uri)
                 if parse_result.scheme != "s3":
+                    # Validate that local path exists before attempting upload
+                    local_source = file_input.s3_input.s3_uri
+                    if parse_result.scheme == "file":
+                        local_source = url2pathname(parse_result.path)
+                    if not os.path.exists(local_source):
+                        raise ValueError(
+                            f"Input source path does not exist: {file_input.s3_input.s3_uri!r}. "
+                            f"Please provide a valid local path or S3 URI for input "
+                            f"'{file_input.input_name}'."
+                        )
                     if _pipeline_config:
                         desired_s3_uri = s3.s3_path_join(
                             "s3://",
@@ -443,6 +557,12 @@ class Processor(object):
                             "input",
                             file_input.input_name,
                         )
+                    logger.info(
+                        "Uploading local input '%s' from %s to %s",
+                        file_input.input_name,
+                        file_input.s3_input.s3_uri,
+                        desired_s3_uri,
+                    )
                     s3_uri = s3.S3Uploader.upload(
                         local_path=file_input.s3_input.s3_uri,
                         desired_s3_uri=desired_s3_uri,

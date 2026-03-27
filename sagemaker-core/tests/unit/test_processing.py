@@ -23,6 +23,7 @@ from sagemaker.core.processing import (
     _processing_output_to_request_dict,
     _get_process_request,
     logs_for_processing_job,
+    processing_input_from_local,
 )
 from sagemaker.core.shapes import (
     ProcessingInput,
@@ -44,6 +45,221 @@ def mock_session():
     session.expand_role = Mock(side_effect=lambda x: x)
     session.sagemaker_config = {}
     return session
+
+
+class TestProcessingInputFromLocal:
+    """Tests for the processing_input_from_local() factory function."""
+
+    def test_processing_input_from_local_with_file_path_creates_valid_input(self):
+        """A local file path should produce a valid ProcessingInput."""
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".csv") as f:
+            f.write("col1,col2\n1,2\n")
+            temp_file = f.name
+
+        try:
+            result = processing_input_from_local(
+                source=temp_file,
+                destination="/opt/ml/processing/input/data",
+                input_name="my-data",
+            )
+            assert isinstance(result, ProcessingInput)
+            assert result.input_name == "my-data"
+            assert result.s3_input.s3_uri == temp_file
+            assert result.s3_input.local_path == "/opt/ml/processing/input/data"
+            assert result.s3_input.s3_data_type == "S3Prefix"
+            assert result.s3_input.s3_input_mode == "File"
+        finally:
+            os.unlink(temp_file)
+
+    def test_processing_input_from_local_with_directory_path_creates_valid_input(self):
+        """A local directory path should produce a valid ProcessingInput."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = processing_input_from_local(
+                source=tmpdir,
+                destination="/opt/ml/processing/input/data",
+                input_name="dir-data",
+            )
+            assert isinstance(result, ProcessingInput)
+            assert result.s3_input.s3_uri == tmpdir
+
+    def test_processing_input_from_local_with_s3_uri_passes_through(self):
+        """An S3 URI should pass through without local path validation."""
+        result = processing_input_from_local(
+            source="s3://my-bucket/data/training",
+            destination="/opt/ml/processing/input/data",
+            input_name="s3-data",
+        )
+        assert isinstance(result, ProcessingInput)
+        assert result.s3_input.s3_uri == "s3://my-bucket/data/training"
+
+    def test_processing_input_from_local_with_nonexistent_path_raises_value_error(self):
+        """A nonexistent local path should raise ValueError."""
+        with pytest.raises(ValueError, match="Input source path does not exist"):
+            processing_input_from_local(
+                source="/nonexistent/path/to/data",
+                destination="/opt/ml/processing/input/data",
+            )
+
+    def test_processing_input_from_local_with_custom_input_name(self):
+        """Custom input_name should be set on the ProcessingInput."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = processing_input_from_local(
+                source=tmpdir,
+                destination="/opt/ml/processing/input/data",
+                input_name="custom-name",
+            )
+            assert result.input_name == "custom-name"
+
+    def test_processing_input_from_local_default_parameters(self):
+        """Default parameters should be applied correctly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = processing_input_from_local(
+                source=tmpdir,
+                destination="/opt/ml/processing/input/data",
+            )
+            assert result.input_name is None
+            assert result.s3_input.s3_data_type == "S3Prefix"
+            assert result.s3_input.s3_input_mode == "File"
+
+    def test_processing_input_from_local_with_empty_source_raises_value_error(self):
+        """Empty source should raise ValueError."""
+        with pytest.raises(ValueError, match="source must be a valid local path or S3 URI"):
+            processing_input_from_local(
+                source="",
+                destination="/opt/ml/processing/input/data",
+            )
+
+    def test_processing_input_from_local_with_none_source_raises_value_error(self):
+        """None source should raise ValueError."""
+        with pytest.raises(ValueError, match="source must be a valid local path or S3 URI"):
+            processing_input_from_local(
+                source=None,
+                destination="/opt/ml/processing/input/data",
+            )
+
+    def test_processing_input_from_local_with_optional_s3_params(self):
+        """Optional S3 parameters should be passed through."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = processing_input_from_local(
+                source=tmpdir,
+                destination="/opt/ml/processing/input/data",
+                s3_data_distribution_type="FullyReplicated",
+                s3_compression_type="Gzip",
+            )
+            assert result.s3_input.s3_data_distribution_type == "FullyReplicated"
+            assert result.s3_input.s3_compression_type == "Gzip"
+
+    def test_processing_input_from_local_used_in_normalize_inputs(self, mock_session):
+        """ProcessingInput from processing_input_from_local should work with _normalize_inputs."""
+        processor = Processor(
+            role="arn:aws:iam::123456789012:role/SageMakerRole",
+            image_uri="test-image:latest",
+            instance_count=1,
+            instance_type="ml.m5.xlarge",
+            sagemaker_session=mock_session,
+        )
+        processor._current_job_name = "test-job"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            inp = processing_input_from_local(
+                source=tmpdir,
+                destination="/opt/ml/processing/input/data",
+                input_name="local-data",
+            )
+            with patch(
+                "sagemaker.core.s3.S3Uploader.upload", return_value="s3://bucket/uploaded"
+            ):
+                result = processor._normalize_inputs([inp])
+                assert len(result) == 1
+                assert result[0].s3_input.s3_uri == "s3://bucket/uploaded"
+
+
+class TestNormalizeInputsLocalPathValidation:
+    """Tests for local path validation in _normalize_inputs()."""
+
+    def test_normalize_inputs_with_nonexistent_local_path_raises_value_error(self, mock_session):
+        """A nonexistent local path in s3_input.s3_uri should raise ValueError."""
+        processor = Processor(
+            role="arn:aws:iam::123456789012:role/SageMakerRole",
+            image_uri="test-image:latest",
+            instance_count=1,
+            instance_type="ml.m5.xlarge",
+            sagemaker_session=mock_session,
+        )
+        processor._current_job_name = "test-job"
+
+        s3_input = ProcessingS3Input(
+            s3_uri="/nonexistent/path/to/data",
+            local_path="/opt/ml/processing/input",
+            s3_data_type="S3Prefix",
+            s3_input_mode="File",
+        )
+        inputs = [ProcessingInput(input_name="bad-input", s3_input=s3_input)]
+
+        with pytest.raises(ValueError, match="Input source path does not exist"):
+            processor._normalize_inputs(inputs)
+
+    def test_normalize_inputs_with_local_source_uploads_to_s3(self, mock_session):
+        """A valid local path should be uploaded to S3."""
+        processor = Processor(
+            role="arn:aws:iam::123456789012:role/SageMakerRole",
+            image_uri="test-image:latest",
+            instance_count=1,
+            instance_type="ml.m5.xlarge",
+            sagemaker_session=mock_session,
+        )
+        processor._current_job_name = "test-job"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s3_input = ProcessingS3Input(
+                s3_uri=tmpdir,
+                local_path="/opt/ml/processing/input",
+                s3_data_type="S3Prefix",
+                s3_input_mode="File",
+            )
+            inputs = [ProcessingInput(input_name="local-input", s3_input=s3_input)]
+
+            with patch(
+                "sagemaker.core.s3.S3Uploader.upload",
+                return_value="s3://test-bucket/sagemaker/test-job/input/local-input",
+            ) as mock_upload:
+                result = processor._normalize_inputs(inputs)
+                assert len(result) == 1
+                assert result[0].s3_input.s3_uri.startswith("s3://")
+                mock_upload.assert_called_once()
+
+    def test_normalize_inputs_local_path_logs_upload_info(self, mock_session):
+        """Uploading a local path should log an info message."""
+        processor = Processor(
+            role="arn:aws:iam::123456789012:role/SageMakerRole",
+            image_uri="test-image:latest",
+            instance_count=1,
+            instance_type="ml.m5.xlarge",
+            sagemaker_session=mock_session,
+        )
+        processor._current_job_name = "test-job"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s3_input = ProcessingS3Input(
+                s3_uri=tmpdir,
+                local_path="/opt/ml/processing/input",
+                s3_data_type="S3Prefix",
+                s3_input_mode="File",
+            )
+            inputs = [ProcessingInput(input_name="local-input", s3_input=s3_input)]
+
+            with patch(
+                "sagemaker.core.s3.S3Uploader.upload",
+                return_value="s3://test-bucket/uploaded",
+            ):
+                with patch("sagemaker.core.processing.logger") as mock_logger:
+                    processor._normalize_inputs(inputs)
+                    mock_logger.info.assert_any_call(
+                        "Uploading local input '%s' from %s to %s",
+                        "local-input",
+                        tmpdir,
+                        f"s3://test-bucket/sagemaker/test-job/input/local-input",
+                    )
 
 
 class TestProcessorNormalizeArgs:
