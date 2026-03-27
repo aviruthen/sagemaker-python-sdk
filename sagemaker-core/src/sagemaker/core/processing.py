@@ -418,12 +418,27 @@ class Processor(object):
                 if file_input.dataset_definition:
                     normalized_inputs.append(file_input)
                     continue
+                # Handle case where source was set but s3_input was not created
+                # (e.g., if ProcessingInput was constructed without using the
+                # convenience __init__ logic)
+                if file_input.s3_input is None and getattr(file_input, "source", None):
+                    file_input.s3_input = ProcessingS3Input(
+                        s3_uri=file_input.source,
+                        s3_data_type="S3Prefix",
+                        s3_input_mode="File",
+                    )
                 if file_input.s3_input and is_pipeline_variable(file_input.s3_input.s3_uri):
                     normalized_inputs.append(file_input)
                     continue
                 # If the s3_uri is not an s3_uri, create one.
                 parse_result = urlparse(file_input.s3_input.s3_uri)
                 if parse_result.scheme != "s3":
+                    local_path = file_input.s3_input.s3_uri
+                    logger.info(
+                        "Uploading local input '%s' (%s) to S3...",
+                        file_input.input_name,
+                        local_path,
+                    )
                     if _pipeline_config:
                         desired_s3_uri = s3.s3_path_join(
                             "s3://",
@@ -444,7 +459,7 @@ class Processor(object):
                             file_input.input_name,
                         )
                     s3_uri = s3.S3Uploader.upload(
-                        local_path=file_input.s3_input.s3_uri,
+                        local_path=local_path,
                         desired_s3_uri=desired_s3_uri,
                         sagemaker_session=self.sagemaker_session,
                         kms_key=kms_key,
