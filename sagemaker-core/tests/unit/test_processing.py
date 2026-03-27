@@ -527,22 +527,34 @@ class TestProcessingInputFromLocal:
         assert result.s3_input.s3_data_type == "ManifestFile"
         assert result.s3_input.s3_input_mode == "Pipe"
 
-    def test_processing_input_from_local_empty_input_name_raises(self):
-        """processing_input_from_local should raise ValueError for empty input_name."""
+    @pytest.mark.parametrize("input_name", ["", None])
+    def test_processing_input_from_local_invalid_input_name_raises(self, input_name):
+        """processing_input_from_local should raise ValueError for empty or None input_name."""
         with pytest.raises(ValueError, match="input_name must be a non-empty string"):
             processing_input_from_local(
-                input_name="",
+                input_name=input_name,
                 local_path="/tmp/data",
                 destination="/opt/ml/processing/input",
             )
 
-    def test_processing_input_from_local_empty_local_path_raises(self):
-        """processing_input_from_local should raise ValueError for empty local_path."""
+    @pytest.mark.parametrize("local_path", ["", None])
+    def test_processing_input_from_local_invalid_local_path_raises(self, local_path):
+        """processing_input_from_local should raise ValueError for empty or None local_path."""
         with pytest.raises(ValueError, match="local_path must be a non-empty string"):
             processing_input_from_local(
                 input_name="data",
-                local_path="",
+                local_path=local_path,
                 destination="/opt/ml/processing/input",
+            )
+
+    @pytest.mark.parametrize("destination", ["", None])
+    def test_processing_input_from_local_invalid_destination_raises(self, destination):
+        """processing_input_from_local should raise ValueError for empty or None destination."""
+        with pytest.raises(ValueError, match="destination must be a non-empty string"):
+            processing_input_from_local(
+                input_name="data",
+                local_path="/tmp/data",
+                destination=destination,
             )
 
     def test_processing_input_from_local_with_pipeline_config_uses_pipeline_s3_path(
@@ -574,6 +586,9 @@ class TestProcessingInputFromLocal:
             ) as mock_upload:
                 result = processor._normalize_inputs([inp])
                 mock_upload.assert_called_once()
+                # Verify the session is passed correctly to the upload call
+                call_kwargs = mock_upload.call_args
+                assert call_kwargs[1]["sagemaker_session"] == mock_session
                 assert result[0].s3_input.s3_uri.startswith("s3://")
 
 
@@ -614,32 +629,34 @@ class TestCreateProcessingInput:
         assert result.s3_input.s3_data_type == "S3Prefix"
         assert result.s3_input.s3_input_mode == "File"
 
-    def test_create_processing_input_empty_source_raises(self):
-        """create_processing_input should raise ValueError for empty source."""
+    @pytest.mark.parametrize("source", ["", None])
+    def test_create_processing_input_invalid_source_raises(self, source):
+        """create_processing_input should raise ValueError for empty or None source."""
         with pytest.raises(ValueError, match="source must be a non-empty string"):
             create_processing_input(
-                source="",
+                source=source,
                 destination="/opt/ml/processing/input",
                 input_name="data",
             )
 
-    def test_create_processing_input_empty_destination_raises(self):
-        """create_processing_input should raise ValueError for empty destination."""
+    @pytest.mark.parametrize("destination", ["", None])
+    def test_create_processing_input_invalid_destination_raises(self, destination):
+        """create_processing_input should raise ValueError for empty or None destination."""
         with pytest.raises(ValueError, match="destination must be a non-empty string"):
             create_processing_input(
                 source="/tmp/data",
-                destination="",
+                destination=destination,
                 input_name="data",
             )
 
-    def test_create_processing_input_empty_input_name_raises(self):
-        """create_processing_input should raise ValueError for empty input_name."""
-        with pytest.raises(ValueError, match="input_name must be a non-empty string"):
-            create_processing_input(
-                source="/tmp/data",
-                destination="/opt/ml/processing/input",
-                input_name="",
-            )
+    def test_create_processing_input_with_none_input_name_succeeds(self):
+        """create_processing_input should succeed with input_name=None (auto-generated)."""
+        result = create_processing_input(
+            source="/tmp/data",
+            destination="/opt/ml/processing/input",
+        )
+        assert result.input_name is None
+        assert result.s3_input.s3_uri == "/tmp/data"
 
 
 class TestNormalizeInputsLocalPathUpload:

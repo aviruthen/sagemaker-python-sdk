@@ -16,14 +16,14 @@ which is used for Amazon SageMaker Processing Jobs. These jobs let users perform
 data pre-processing, post-processing, feature engineering, data validation, and model evaluation,
 and interpretation on Amazon SageMaker.
 """
-from __future__ import absolute_import
+from __future__ import annotations
 
 import json
 import logging
 import os
 import pathlib
 import re
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Literal, Optional, Union
 import time
 from copy import copy
 from textwrap import dedent
@@ -84,42 +84,37 @@ from sagemaker.core.utils.utils import serialize
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_PROCESSING_INPUT_PATH = "/opt/ml/processing/input"
+
 
 def processing_input_from_local(
     input_name: str,
     local_path: str,
     destination: str,
-    s3_data_type: str = "S3Prefix",
-    s3_input_mode: str = "File",
+    s3_data_type: Literal["S3Prefix", "ManifestFile"] = "S3Prefix",
+    s3_input_mode: Literal["File", "Pipe"] = "File",
 ) -> ProcessingInput:
-    """Creates a ProcessingInput from a local file or directory path.
+    """Create a ProcessingInput from a local file or directory path.
 
     This is a convenience factory that makes it clear users can pass local
     paths as processing job inputs. The local path is stored in
     ``ProcessingS3Input.s3_uri`` and will be automatically uploaded to S3
     when the processor's ``run()`` method is called.
 
-    Args:
-        input_name: The name for this processing input.
-        local_path: A local file or directory path to use as input.
-            This will be uploaded to S3 automatically before the
-            processing job starts.
-        destination: The container path where the input data will be
-            made available (e.g. ``/opt/ml/processing/input/data``).
-        s3_data_type: The S3 data type. Valid values: ``'S3Prefix'``,
-            ``'ManifestFile'`` (default: ``'S3Prefix'``).
-        s3_input_mode: The input mode. Valid values: ``'File'``,
-            ``'Pipe'`` (default: ``'File'``).
+    :param input_name: The name for this processing input.
+    :param local_path: A local file or directory path to use as input.
+        This will be uploaded to S3 automatically before the
+        processing job starts.
+    :param destination: The container path where the input data will be
+        made available (e.g. ``'/opt/ml/processing/input/data'``).
+    :param s3_data_type: The S3 data type (default: ``'S3Prefix'``).
+    :param s3_input_mode: The input mode (default: ``'File'``).
+    :returns: A ``ProcessingInput`` configured with the local path.
+        The path will be uploaded to S3 during ``Processor.run()``.
+    :raises ValueError: If ``input_name``, ``local_path``, or ``destination`` is empty.
 
-    Returns:
-        ProcessingInput: A ``ProcessingInput`` object configured with the
-            local path. The path will be uploaded to S3 during
-            ``Processor.run()``.
+    Example::
 
-    Raises:
-        ValueError: If ``input_name`` or ``local_path`` is empty.
-
-    Example:
         >>> inp = processing_input_from_local(
         ...     input_name="my-data",
         ...     local_path="/home/user/data/",
@@ -135,6 +130,10 @@ def processing_input_from_local(
         raise ValueError(
             f"local_path must be a non-empty string, got: {local_path!r}"
         )
+    if not destination:
+        raise ValueError(
+            f"destination must be a non-empty string, got: {destination!r}"
+        )
     return ProcessingInput(
         input_name=input_name,
         s3_input=ProcessingS3Input(
@@ -149,38 +148,33 @@ def processing_input_from_local(
 def create_processing_input(
     source: str,
     destination: str,
-    input_name: str,
-    s3_data_type: str = "S3Prefix",
-    s3_input_mode: str = "File",
+    input_name: str | None = None,
+    s3_data_type: Literal["S3Prefix", "ManifestFile"] = "S3Prefix",
+    s3_input_mode: Literal["File", "Pipe"] = "File",
 ) -> ProcessingInput:
-    """Creates a ProcessingInput from a local path or S3 URI.
+    """Create a ProcessingInput from a local path or S3 URI.
 
     This factory provides V2-like ergonomics where users pass a ``source``
     parameter that can be either a local file/directory path or an S3 URI.
     If ``source`` is a local path (does not start with ``s3://``), it will
     be automatically uploaded to S3 when the processor runs.
 
-    Args:
-        source: A local file/directory path or S3 URI. Local paths will
-            be uploaded to S3 automatically before the processing job
-            starts.
-        destination: The container path where the input data will be
-            made available (e.g. ``/opt/ml/processing/input/data``).
-        input_name: The name for this processing input.
-        s3_data_type: The S3 data type. Valid values: ``'S3Prefix'``,
-            ``'ManifestFile'`` (default: ``'S3Prefix'``).
-        s3_input_mode: The input mode. Valid values: ``'File'``,
-            ``'Pipe'`` (default: ``'File'``).
+    :param source: A local file/directory path or S3 URI. Local paths will
+        be uploaded to S3 automatically before the processing job starts.
+    :param destination: The container path where the input data will be
+        made available (e.g. ``'/opt/ml/processing/input/data'``).
+    :param input_name: The name for this processing input. If ``None``,
+        a name will be auto-generated by ``Processor._normalize_inputs()``
+        (default: ``None``).
+    :param s3_data_type: The S3 data type (default: ``'S3Prefix'``).
+    :param s3_input_mode: The input mode (default: ``'File'``).
+    :returns: A ``ProcessingInput`` object. If ``source`` is a local path,
+        it is stored in ``ProcessingS3Input.s3_uri`` and will be uploaded
+        to S3 during ``Processor.run()``.
+    :raises ValueError: If ``source`` or ``destination`` is empty.
 
-    Returns:
-        ProcessingInput: A ``ProcessingInput`` object. If ``source`` is a
-            local path, it is stored in ``ProcessingS3Input.s3_uri`` and
-            will be uploaded to S3 during ``Processor.run()``.
+    Example::
 
-    Raises:
-        ValueError: If ``source``, ``destination``, or ``input_name`` is empty.
-
-    Example:
         >>> # Using a local path
         >>> inp = create_processing_input(
         ...     source="/home/user/data/",
@@ -200,10 +194,6 @@ def create_processing_input(
     if not destination:
         raise ValueError(
             f"destination must be a non-empty string, got: {destination!r}"
-        )
-    if not input_name:
-        raise ValueError(
-            f"input_name must be a non-empty string, got: {input_name!r}"
         )
     return ProcessingInput(
         input_name=input_name,
@@ -560,22 +550,6 @@ class Processor(object):
                 # Generate a name for the ProcessingInput if it doesn't have one.
                 if file_input.input_name is None:
                     file_input.input_name = f"input-{count}"
-
-                # Support ad-hoc 'source' attribute for V2-like ergonomics.
-                # If a user sets file_input.source (e.g. via monkey-patching or
-                # a subclass), populate s3_input.s3_uri from it so the existing
-                # upload logic handles it.
-                _source = getattr(file_input, "source", None)
-                if _source is not None:
-                    if file_input.s3_input is None:
-                        file_input.s3_input = ProcessingS3Input(
-                            s3_uri=_source,
-                            local_path="/opt/ml/processing/input",
-                            s3_data_type="S3Prefix",
-                            s3_input_mode="File",
-                        )
-                    else:
-                        file_input.s3_input.s3_uri = _source
 
                 if file_input.dataset_definition:
                     normalized_inputs.append(file_input)
