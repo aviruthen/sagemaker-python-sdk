@@ -52,6 +52,7 @@ from sagemaker.core.config.config_schema import (
 from sagemaker.core.local.local_session import LocalSession
 from sagemaker.core.helper.session_helper import Session
 from sagemaker.core.shapes import ProcessingInput, ProcessingOutput, ProcessingS3Input
+from sagemaker.core.shapes.shapes import _DEFAULT_S3_DATA_TYPE, _DEFAULT_S3_INPUT_MODE
 from sagemaker.core.resources import ProcessingJob
 from sagemaker.core.workflow.pipeline_context import PipelineSession
 from sagemaker.core.common_utils import (
@@ -418,16 +419,13 @@ class Processor(object):
                 if file_input.dataset_definition:
                     normalized_inputs.append(file_input)
                     continue
-                # Handle case where source was set but s3_input was not created
-                # (e.g., if ProcessingInput was constructed without using the
-                # convenience __init__ logic)
-                if file_input.s3_input is None and getattr(file_input, "source", None):
-                    file_input.s3_input = ProcessingS3Input(
-                        s3_uri=file_input.source,
-                        s3_data_type="S3Prefix",
-                        s3_input_mode="File",
+                if file_input.s3_input is None:
+                    raise ValueError(
+                        f"ProcessingInput '{file_input.input_name}' has no "
+                        "s3_input or dataset_definition. Provide 'source', "
+                        "'s3_input', or 'dataset_definition'."
                     )
-                if file_input.s3_input and is_pipeline_variable(file_input.s3_input.s3_uri):
+                if is_pipeline_variable(file_input.s3_input.s3_uri):
                     normalized_inputs.append(file_input)
                     continue
                 # If the s3_uri is not an s3_uri, create one.
