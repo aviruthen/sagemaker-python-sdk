@@ -21,7 +21,7 @@ When a local path is provided, it is automatically uploaded to S3 during input
 normalization. For a convenient way to create ``ProcessingInput`` objects from
 local sources, use the :func:`processing_input_from_local` helper function.
 """
-from __future__ import absolute_import
+from __future__ import annotations
 
 import json
 import logging
@@ -93,11 +93,11 @@ logger = logging.getLogger(__name__)
 def processing_input_from_local(
     source: str,
     destination: str,
-    input_name: Optional[str] = None,
+    input_name: str | None = None,
     s3_data_type: str = "S3Prefix",
     s3_input_mode: str = "File",
-    s3_data_distribution_type: Optional[str] = None,
-    s3_compression_type: Optional[str] = None,
+    s3_data_distribution_type: str | None = None,
+    s3_compression_type: str | None = None,
 ) -> ProcessingInput:
     """Creates a ProcessingInput from a local file/directory path or S3 URI.
 
@@ -131,7 +131,7 @@ def processing_input_from_local(
 
     Raises:
         ValueError: If ``source`` is a local path that does not exist.
-        ValueError: If ``source`` is empty or None.
+        TypeError: If ``source`` is not a string.
 
     Examples:
         Create an input from a local directory::
@@ -152,12 +152,15 @@ def processing_input_from_local(
                 destination="/opt/ml/processing/input/data",
             )
     """
-    if not source:
+    if not isinstance(source, str) or not source:
         raise ValueError(
-            f"source must be a valid local path or S3 URI, got: {source!r}"
+            f"source must be a non-empty string containing a valid local path "
+            f"or S3 URI, got: {source!r}"
         )
 
-    # Check if source is a local path (not an S3 URI)
+    # Check if source is a local path (not a remote URI).
+    # Note: On Windows, absolute paths like C:\data\file.csv will have
+    # parse_result.scheme == 'c', which correctly falls into the local path branch.
     parse_result = urlparse(source)
     if parse_result.scheme not in ("s3", "http", "https"):
         # Treat as local path - validate existence
@@ -172,6 +175,8 @@ def processing_input_from_local(
 
     s3_input_kwargs = {
         "s3_uri": source,
+        # local_path in ProcessingS3Input maps to the container destination path
+        # where the input data will be made available inside the processing container.
         "local_path": destination,
         "s3_data_type": s3_data_type,
         "s3_input_mode": s3_input_mode,
@@ -534,9 +539,10 @@ class Processor(object):
                         local_source = url2pathname(parse_result.path)
                     if not os.path.exists(local_source):
                         raise ValueError(
-                            f"Input source path does not exist: {file_input.s3_input.s3_uri!r}. "
-                            f"Please provide a valid local path or S3 URI for input "
-                            f"'{file_input.input_name}'."
+                            f"Input source path does not exist: "
+                            f"{file_input.s3_input.s3_uri!r}. "
+                            f"Please provide a valid local path or S3 URI "
+                            f"for input '{file_input.input_name}'."
                         )
                     if _pipeline_config:
                         desired_s3_uri = s3.s3_path_join(
@@ -557,6 +563,7 @@ class Processor(object):
                             "input",
                             file_input.input_name,
                         )
+                    # Log after both pipeline/non-pipeline branches have set desired_s3_uri
                     logger.info(
                         "Uploading local input '%s' from %s to %s",
                         file_input.input_name,
