@@ -23,6 +23,8 @@ from sagemaker.core.processing import (
     _processing_output_to_request_dict,
     _get_process_request,
     logs_for_processing_job,
+    processing_input_from_local,
+    create_processing_input,
 )
 from sagemaker.core.shapes import (
     ProcessingInput,
@@ -491,6 +493,240 @@ class TestPreservationNonLocalFileBehavior:
         # S3 URIs should be preserved since they already have s3:// scheme
         assert result[0].s3_output.s3_uri == "s3://my-bucket/first"
         assert result[1].s3_output.s3_uri == "s3://my-bucket/second"
+
+
+class TestProcessingInputFromLocal:
+    """Tests for the processing_input_from_local convenience factory."""
+
+    def test_processing_input_from_local_creates_valid_processing_input(self):
+        """processing_input_from_local should create a ProcessingInput with the local
+        path stored in s3_input.s3_uri."""
+        result = processing_input_from_local(
+            input_name="my-data",
+            local_path="/home/user/data/",
+            destination="/opt/ml/processing/input/data",
+        )
+
+        assert isinstance(result, ProcessingInput)
+        assert result.input_name == "my-data"
+        assert result.s3_input.s3_uri == "/home/user/data/"
+        assert result.s3_input.local_path == "/opt/ml/processing/input/data"
+        assert result.s3_input.s3_data_type == "S3Prefix"
+        assert result.s3_input.s3_input_mode == "File"
+
+    def test_processing_input_from_local_with_custom_data_type_and_mode(self):
+        """processing_input_from_local should accept custom s3_data_type and s3_input_mode."""
+        result = processing_input_from_local(
+            input_name="manifest-input",
+            local_path="/tmp/manifest.json",
+            destination="/opt/ml/processing/input/manifest",
+            s3_data_type="ManifestFile",
+            s3_input_mode="Pipe",
+        )
+
+        assert result.s3_input.s3_data_type == "ManifestFile"
+        assert result.s3_input.s3_input_mode == "Pipe"
+
+    def test_processing_input_from_local_empty_input_name_raises(self):
+        """processing_input_from_local should raise ValueError for empty input_name."""
+        with pytest.raises(ValueError, match="input_name must be a non-empty string"):
+            processing_input_from_local(
+                input_name="",
+                local_path="/tmp/data",
+                destination="/opt/ml/processing/input",
+            )
+
+    def test_processing_input_from_local_empty_local_path_raises(self):
+        """processing_input_from_local should raise ValueError for empty local_path."""
+        with pytest.raises(ValueError, match="local_path must be a non-empty string"):
+            processing_input_from_local(
+                input_name="data",
+                local_path="",
+                destination="/opt/ml/processing/input",
+            )
+
+    def test_processing_input_from_local_with_pipeline_config_uses_pipeline_s3_path(
+        self, mock_session
+    ):
+        """When used with a Processor, the local path should be uploaded using
+        pipeline config S3 path when pipeline config is set."""
+        inp = processing_input_from_local(
+            input_name="my-data",
+            local_path="/tmp/local_data",
+            destination="/opt/ml/processing/input/data",
+        )
+
+        processor = Processor(
+            role="arn:aws:iam::123456789012:role/SageMakerRole",
+            image_uri="test-image:latest",
+            instance_count=1,
+            instance_type="ml.m5.xlarge",
+            sagemaker_session=mock_session,
+        )
+        processor._current_job_name = "test-job"
+
+        with patch("sagemaker.core.workflow.utilities._pipeline_config") as mock_config:
+            mock_config.pipeline_name = "test-pipeline"
+            mock_config.step_name = "test-step"
+            with patch(
+                "sagemaker.core.s3.S3Uploader.upload",
+                return_value="s3://test-bucket/sagemaker/test-pipeline/test-step/input/my-data",
+            ) as mock_upload:
+                result = processor._normalize_inputs([inp])
+                mock_upload.assert_called_once()
+                assert result[0].s3_input.s3_uri.startswith("s3://")
+
+
+class TestCreateProcessingInput:
+    """Tests for the create_processing_input convenience factory."""
+
+    def test_create_processing_input_with_local_path_stores_path_in_s3_uri(self):
+        """create_processing_input with a local path should store it in s3_input.s3_uri."""
+        result = create_processing_input(
+            source="/home/user/data/",
+            destination="/opt/ml/processing/input/data",
+            input_name="my-data",
+        )
+
+        assert isinstance(result, ProcessingInput)
+        assert result.input_name == "my-data"
+        assert result.s3_input.s3_uri == "/home/user/data/"
+        assert result.s3_input.local_path == "/opt/ml/processing/input/data"
+
+    def test_create_processing_input_with_s3_uri_stores_directly(self):
+        """create_processing_input with an S3 URI should store it directly."""
+        result = create_processing_input(
+            source="s3://my-bucket/data/",
+            destination="/opt/ml/processing/input/data",
+            input_name="my-data",
+        )
+
+        assert result.s3_input.s3_uri == "s3://my-bucket/data/"
+
+    def test_create_processing_input_default_s3_data_type_and_input_mode(self):
+        """create_processing_input should default to S3Prefix and File."""
+        result = create_processing_input(
+            source="/tmp/data",
+            destination="/opt/ml/processing/input",
+            input_name="data",
+        )
+
+        assert result.s3_input.s3_data_type == "S3Prefix"
+        assert result.s3_input.s3_input_mode == "File"
+
+    def test_create_processing_input_empty_source_raises(self):
+        """create_processing_input should raise ValueError for empty source."""
+        with pytest.raises(ValueError, match="source must be a non-empty string"):
+            create_processing_input(
+                source="",
+                destination="/opt/ml/processing/input",
+                input_name="data",
+            )
+
+    def test_create_processing_input_empty_destination_raises(self):
+        """create_processing_input should raise ValueError for empty destination."""
+        with pytest.raises(ValueError, match="destination must be a non-empty string"):
+            create_processing_input(
+                source="/tmp/data",
+                destination="",
+                input_name="data",
+            )
+
+    def test_create_processing_input_empty_input_name_raises(self):
+        """create_processing_input should raise ValueError for empty input_name."""
+        with pytest.raises(ValueError, match="input_name must be a non-empty string"):
+            create_processing_input(
+                source="/tmp/data",
+                destination="/opt/ml/processing/input",
+                input_name="",
+            )
+
+
+class TestNormalizeInputsLocalPathUpload:
+    """Tests for _normalize_inputs handling of local paths in s3_uri."""
+
+    def test_normalize_inputs_with_local_path_in_s3_uri_uploads_to_s3(self, mock_session):
+        """A local file path in s3_input.s3_uri should be uploaded to S3."""
+        processor = Processor(
+            role="arn:aws:iam::123456789012:role/SageMakerRole",
+            image_uri="test-image:latest",
+            instance_count=1,
+            instance_type="ml.m5.xlarge",
+            sagemaker_session=mock_session,
+        )
+        processor._current_job_name = "test-job"
+
+        inp = create_processing_input(
+            source="/tmp/my_local_data",
+            destination="/opt/ml/processing/input/data",
+            input_name="local-data",
+        )
+
+        with patch("sagemaker.core.workflow.utilities._pipeline_config", None):
+            with patch(
+                "sagemaker.core.s3.S3Uploader.upload",
+                return_value="s3://test-bucket/sagemaker/test-job/input/local-data",
+            ) as mock_upload:
+                result = processor._normalize_inputs([inp])
+
+                assert len(result) == 1
+                assert result[0].s3_input.s3_uri == (
+                    "s3://test-bucket/sagemaker/test-job/input/local-data"
+                )
+                mock_upload.assert_called_once()
+
+    def test_normalize_inputs_with_local_directory_in_s3_uri_uploads_to_s3(self, mock_session):
+        """A local directory path in s3_input.s3_uri should be uploaded to S3."""
+        processor = Processor(
+            role="arn:aws:iam::123456789012:role/SageMakerRole",
+            image_uri="test-image:latest",
+            instance_count=1,
+            instance_type="ml.m5.xlarge",
+            sagemaker_session=mock_session,
+        )
+        processor._current_job_name = "test-job"
+
+        inp = processing_input_from_local(
+            input_name="dir-data",
+            local_path="/home/user/datasets/training/",
+            destination="/opt/ml/processing/input/train",
+        )
+
+        with patch("sagemaker.core.workflow.utilities._pipeline_config", None):
+            with patch(
+                "sagemaker.core.s3.S3Uploader.upload",
+                return_value="s3://test-bucket/sagemaker/test-job/input/dir-data",
+            ) as mock_upload:
+                result = processor._normalize_inputs([inp])
+
+                assert len(result) == 1
+                assert result[0].s3_input.s3_uri.startswith("s3://")
+                mock_upload.assert_called_once()
+
+    def test_normalize_inputs_s3_uri_not_uploaded(self, mock_session):
+        """An S3 URI in s3_input.s3_uri should NOT trigger an upload."""
+        processor = Processor(
+            role="arn:aws:iam::123456789012:role/SageMakerRole",
+            image_uri="test-image:latest",
+            instance_count=1,
+            instance_type="ml.m5.xlarge",
+            sagemaker_session=mock_session,
+        )
+        processor._current_job_name = "test-job"
+
+        inp = create_processing_input(
+            source="s3://my-bucket/data/",
+            destination="/opt/ml/processing/input/data",
+            input_name="s3-data",
+        )
+
+        with patch("sagemaker.core.workflow.utilities._pipeline_config", None):
+            with patch("sagemaker.core.s3.S3Uploader.upload") as mock_upload:
+                result = processor._normalize_inputs([inp])
+
+                assert len(result) == 1
+                assert result[0].s3_input.s3_uri == "s3://my-bucket/data/"
+                mock_upload.assert_not_called()
 
 
 class TestProcessorStartNew:
