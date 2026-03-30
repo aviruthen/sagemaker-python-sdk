@@ -10,13 +10,16 @@
 # distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF
 # ANY KIND, either express or implied. See the License for the specific
 # language governing permissions and limitations under the License.
-"""Tests for PipelineVariable support in ModelTrainer (GH#5524).
+"""Tests for PipelineVariable support in ModelTrainer.
 
 Verifies that ModelTrainer fields accept PipelineVariable objects
 (e.g., ParameterString) in addition to their concrete types, following
 the existing V3 pattern established by SourceCode and OutputDataConfig.
 
-See: https://github.com/aws/sagemaker-python-sdk/issues/5524
+Also verifies that safe_serialize correctly handles PipelineVariable objects
+in hyperparameters (returning them as-is instead of attempting json.dumps),
+and that _create_training_job_args preserves PipelineVariable objects through
+the serialization pipeline.
 """
 from __future__ import absolute_import
 
@@ -26,13 +29,18 @@ from unittest.mock import patch, MagicMock
 
 from sagemaker.core.helper.session_helper import Session
 from sagemaker.core.helper.pipeline_variable import PipelineVariable, StrPipeVar
-from sagemaker.core.workflow.parameters import ParameterString
+from sagemaker.core.workflow.parameters import (
+    ParameterString,
+    ParameterInteger,
+    ParameterFloat,
+)
 from sagemaker.train.model_trainer import ModelTrainer, Mode
 from sagemaker.train.configs import (
     Compute,
     StoppingCondition,
     OutputDataConfig,
 )
+from sagemaker.train.utils import safe_serialize
 from sagemaker.train.defaults import DEFAULT_INSTANCE_TYPE
 
 
@@ -176,3 +184,114 @@ class TestModelTrainerRealValuesStillWork:
                 stopping_condition=DEFAULT_STOPPING,
                 output_data_config=DEFAULT_OUTPUT,
             )
+
+
+class TestSafeSerializeWithPipelineVariables:
+    """Tests that safe_serialize handles PipelineVariable objects correctly.
+
+    The safe_serialize function must return PipelineVariable objects as-is
+    instead of attempting json.dumps(), which would raise TypeError.
+    """
+
+    def test_safe_serialize_with_parameter_integer_returns_pipeline_variable(self):
+        """safe_serialize should return ParameterInteger as-is."""
+        param = ParameterInteger(name="MaxDepth", default_value=5)
+        result = safe_serialize(param)
+        assert result is param
+        assert isinstance(result, PipelineVariable)
+
+    def test_safe_serialize_with_parameter_string_returns_pipeline_variable(self):
+        """safe_serialize should return ParameterString as-is."""
+        param = ParameterString(name="Optimizer", default_value="adam")
+        result = safe_serialize(param)
+        assert result is param
+        assert isinstance(result, PipelineVariable)
+
+    def test_safe_serialize_with_parameter_float_returns_pipeline_variable(self):
+        """safe_serialize should return ParameterFloat as-is."""
+        param = ParameterFloat(name="LearningRate", default_value=0.01)
+        result = safe_serialize(param)
+        assert result is param
+        assert isinstance(result, PipelineVariable)
+
+    def test_safe_serialize_still_handles_strings(self):
+        """safe_serialize should return plain strings as-is (no quotes wrapping)."""
+        result = safe_serialize("hello")
+        assert result == "hello"
+
+    def test_safe_serialize_still_handles_integers(self):
+        """safe_serialize should JSON-encode integers."""
+        result = safe_serialize(42)
+        assert result == "42"
+
+    def test_safe_serialize_still_handles_dicts(self):
+        """safe_serialize should JSON-encode dicts."""
+        result = safe_serialize({"key": "value"})
+        assert result == '{"key": "value"}'
+
+    def test_safe_serialize_still_handles_floats(self):
+        """safe_serialize should JSON-encode floats."""
+        result = safe_serialize(0.01)
+        assert result == "0.01"
+
+    def test_safe_serialize_still_handles_booleans(self):
+        """safe_serialize should JSON-encode booleans."""
+        assert safe_serialize(True) == "true"
+        assert safe_serialize(False) == "false"
+
+
+class TestModelTrainerHyperparametersWithPipelineVariables:
+    """Tests that ModelTrainer accepts PipelineVariable objects in hyperparameters."""
+
+    def test_hyperparameters_accept_pipeline_variable_values(self):
+        """ModelTrainer should accept PipelineVariable objects as hyperparameter values."""
+        max_depth = ParameterInteger(name="MaxDepth", default_value=5)
+        learning_rate = ParameterFloat(name="LearningRate", default_value=0.01)
+        optimizer = ParameterString(name="Optimizer", default_value="adam")
+
+        trainer = ModelTrainer(
+            training_image=DEFAULT_IMAGE,
+            role=DEFAULT_ROLE,
+            compute=DEFAULT_COMPUTE,
+            stopping_condition=DEFAULT_STOPPING,
+            output_data_config=DEFAULT_OUTPUT,
+            hyperparameters={
+                "max_depth": max_depth,
+                "learning_rate": learning_rate,
+                "optimizer": optimizer,
+                "static_param": 10,
+            },
+        )
+        assert trainer.hyperparameters["max_depth"] is max_depth
+        assert trainer.hyperparameters["learning_rate"] is learning_rate
+        assert trainer.hyperparameters["optimizer"] is optimizer
+        assert trainer.hyperparameters["static_param"] == 10
+
+    def test_create_training_job_args_with_pipeline_variable_hyperparameters(self):
+        """_create_training_job_args should preserve PipelineVariable in hyper_parameters."""
+        max_depth = ParameterInteger(name="MaxDepth", default_value=5)
+        learning_rate = ParameterFloat(name="LearningRate", default_value=0.01)
+
+        trainer = ModelTrainer(
+            training_image=DEFAULT_IMAGE,
+            role=DEFAULT_ROLE,
+            compute=DEFAULT_COMPUTE,
+            stopping_condition=DEFAULT_STOPPING,
+            output_data_config=DEFAULT_OUTPUT,
+            hyperparameters={
+                "max_depth": max_depth,
+                "learning_rate": learning_rate,
+                "epochs": 10,
+                "verbose": "true",
+            },
+        )
+
+        training_args = trainer._create_training_job_args()
+        hyper_params = training_args["hyper_parameters"]
+
+        # PipelineVariable objects should be preserved as-is by safe_serialize
+        assert hyper_params["max_depth"] is max_depth
+        assert hyper_params["learning_rate"] is learning_rate
+        # Regular values should be serialized to strings
+        assert hyper_params["epochs"] == "10"
+        assert hyper_params["verbose"] == "true"
