@@ -26,7 +26,7 @@ from unittest.mock import patch, MagicMock
 
 from sagemaker.core.helper.session_helper import Session
 from sagemaker.core.helper.pipeline_variable import PipelineVariable, StrPipeVar
-from sagemaker.core.workflow.parameters import ParameterString
+from sagemaker.core.workflow.parameters import ParameterString, ParameterInteger, ParameterFloat
 from sagemaker.train.model_trainer import ModelTrainer, Mode
 from sagemaker.train.configs import (
     Compute,
@@ -115,6 +115,57 @@ class TestModelTrainerPipelineVariableAcceptance:
         )
         assert trainer.environment["DATASET_VERSION"] is param
         assert trainer.environment["STATIC_VAR"] == "hello"
+
+    def test_hyperparameters_accept_parameter_integer(self):
+        """ModelTrainer.hyperparameters should accept ParameterInteger values (GH#5504)."""
+        param = ParameterInteger(name="MaxDepth", default_value=5)
+        trainer = ModelTrainer(
+            training_image=DEFAULT_IMAGE,
+            hyperparameters={"max_depth": param},
+            base_job_name="pipeline-test-job",
+            role=DEFAULT_ROLE,
+            compute=DEFAULT_COMPUTE,
+            stopping_condition=DEFAULT_STOPPING,
+            output_data_config=DEFAULT_OUTPUT,
+        )
+        assert trainer.hyperparameters["max_depth"] is param
+
+    def test_hyperparameters_accept_parameter_string(self):
+        """ModelTrainer.hyperparameters should accept ParameterString values (GH#5504)."""
+        param = ParameterString(name="Algorithm", default_value="xgboost")
+        trainer = ModelTrainer(
+            training_image=DEFAULT_IMAGE,
+            hyperparameters={"algorithm": param},
+            base_job_name="pipeline-test-job",
+            role=DEFAULT_ROLE,
+            compute=DEFAULT_COMPUTE,
+            stopping_condition=DEFAULT_STOPPING,
+            output_data_config=DEFAULT_OUTPUT,
+        )
+        assert trainer.hyperparameters["algorithm"] is param
+
+    def test_hyperparameters_accept_mixed_pipeline_and_plain_values(self):
+        """ModelTrainer.hyperparameters should accept a mix of PipelineVariable and plain values (GH#5504)."""
+        param_int = ParameterInteger(name="MaxDepth", default_value=5)
+        param_str = ParameterString(name="Objective", default_value="reg:squarederror")
+        trainer = ModelTrainer(
+            training_image=DEFAULT_IMAGE,
+            hyperparameters={
+                "max_depth": param_int,
+                "objective": param_str,
+                "eta": 0.1,
+                "num_round": "100",
+            },
+            base_job_name="pipeline-test-job",
+            role=DEFAULT_ROLE,
+            compute=DEFAULT_COMPUTE,
+            stopping_condition=DEFAULT_STOPPING,
+            output_data_config=DEFAULT_OUTPUT,
+        )
+        assert trainer.hyperparameters["max_depth"] is param_int
+        assert trainer.hyperparameters["objective"] is param_str
+        assert trainer.hyperparameters["eta"] == 0.1
+        assert trainer.hyperparameters["num_round"] == "100"
 
 
 class TestModelTrainerRealValuesStillWork:
