@@ -158,7 +158,7 @@ class TestSafeSerializePipelineVariable:
 class TestModelTrainerHyperparametersPipelineVariable:
     """Test that ModelTrainer hyperparameters accept PipelineVariable objects (GH#5504)."""
 
-    def test_hyperparameters_accept_parameter_integer_via_safe_serialize(self):
+    def test_hyperparameters_accept_parameter_integer(self):
         """ModelTrainer hyperparameters should accept ParameterInteger (GH#5504).
 
         This is the exact bug scenario: ParameterInteger in hyperparameters
@@ -175,7 +175,7 @@ class TestModelTrainerHyperparametersPipelineVariable:
         )
         assert trainer.hyperparameters["max_depth"] is max_depth
 
-    def test_hyperparameters_accept_parameter_string_via_safe_serialize(self):
+    def test_hyperparameters_accept_parameter_string(self):
         """ModelTrainer hyperparameters should accept ParameterString (GH#5504)."""
         objective = ParameterString(name="Objective", default_value="reg:squarederror")
         trainer = ModelTrainer(
@@ -228,6 +228,7 @@ class TestModelTrainerHyperparametersPipelineVariable:
         args = trainer._create_training_job_args()
         # PipelineVariable should be preserved as-is by safe_serialize
         assert args["hyper_parameters"]["max_depth"] is max_depth
+        assert isinstance(args["hyper_parameters"]["max_depth"], PipelineVariable)
         # Plain values should be JSON-serialized to strings
         assert args["hyper_parameters"]["eta"] == "0.1"
 
