@@ -12,14 +12,16 @@
 # language governing permissions and limitations under the License.
 """Tests for PipelineVariable support in ModelTrainer.
 
-Verifies that ModelTrainer fields accept PipelineVariable objects
+Verify that ModelTrainer fields accept PipelineVariable objects
 (e.g., ParameterString) in addition to their concrete types, following
 the existing V3 pattern established by SourceCode and OutputDataConfig.
 
-Also verifies that safe_serialize correctly handles PipelineVariable objects
+Also verify that safe_serialize correctly handles PipelineVariable objects
 in hyperparameters (returning them as-is instead of attempting json.dumps),
 and that _create_training_job_args preserves PipelineVariable objects through
 the serialization pipeline.
+
+See: https://github.com/aws/sagemaker-python-sdk/issues/5504
 """
 from __future__ import absolute_import
 
@@ -56,7 +58,7 @@ DEFAULT_OUTPUT = OutputDataConfig(
 )
 
 
-@pytest.fixture(scope="module", autouse=True)
+@pytest.fixture(scope="module")
 def modules_session():
     with patch("sagemaker.train.Session", spec=Session) as session_mock:
         session_instance = session_mock.return_value
@@ -72,7 +74,7 @@ class TestModelTrainerPipelineVariableAcceptance:
     """Test that ModelTrainer fields accept PipelineVariable objects."""
 
     def test_training_image_accepts_parameter_string(self):
-        """ModelTrainer.training_image should accept ParameterString (GH#5524)."""
+        """Verify ModelTrainer.training_image accepts ParameterString (GH#5504)."""
         param = ParameterString(name="TrainingImage", default_value=DEFAULT_IMAGE)
         trainer = ModelTrainer(
             training_image=param,
@@ -85,7 +87,7 @@ class TestModelTrainerPipelineVariableAcceptance:
         assert trainer.training_image is param
 
     def test_algorithm_name_accepts_parameter_string(self):
-        """ModelTrainer.algorithm_name should accept ParameterString."""
+        """Verify ModelTrainer.algorithm_name accepts ParameterString."""
         param = ParameterString(name="AlgorithmName", default_value="my-algo-arn")
         trainer = ModelTrainer(
             algorithm_name=param,
@@ -98,7 +100,7 @@ class TestModelTrainerPipelineVariableAcceptance:
         assert trainer.algorithm_name is param
 
     def test_training_input_mode_accepts_parameter_string(self):
-        """ModelTrainer.training_input_mode should accept ParameterString."""
+        """Verify ModelTrainer.training_input_mode accepts ParameterString."""
         param = ParameterString(name="InputMode", default_value="File")
         trainer = ModelTrainer(
             training_image=DEFAULT_IMAGE,
@@ -111,7 +113,7 @@ class TestModelTrainerPipelineVariableAcceptance:
         assert trainer.training_input_mode is param
 
     def test_environment_values_accept_parameter_string(self):
-        """ModelTrainer.environment dict values should accept ParameterString."""
+        """Verify ModelTrainer.environment dict values accept ParameterString."""
         param = ParameterString(name="DatasetVersion", default_value="v1")
         trainer = ModelTrainer(
             training_image=DEFAULT_IMAGE,
@@ -129,7 +131,7 @@ class TestModelTrainerRealValuesStillWork:
     """Regression tests: verify that passing real values still works after the change."""
 
     def test_training_image_accepts_real_string(self):
-        """ModelTrainer.training_image should still accept a plain string."""
+        """Verify ModelTrainer.training_image still accepts a plain string."""
         trainer = ModelTrainer(
             training_image=DEFAULT_IMAGE,
             role=DEFAULT_ROLE,
@@ -140,7 +142,7 @@ class TestModelTrainerRealValuesStillWork:
         assert trainer.training_image == DEFAULT_IMAGE
 
     def test_algorithm_name_accepts_real_string(self):
-        """ModelTrainer.algorithm_name should still accept a plain string."""
+        """Verify ModelTrainer.algorithm_name still accepts a plain string."""
         trainer = ModelTrainer(
             algorithm_name="arn:aws:sagemaker:us-west-2:000000000000:algorithm/my-algo",
             role=DEFAULT_ROLE,
@@ -151,7 +153,7 @@ class TestModelTrainerRealValuesStillWork:
         assert trainer.algorithm_name == "arn:aws:sagemaker:us-west-2:000000000000:algorithm/my-algo"
 
     def test_training_input_mode_accepts_real_string(self):
-        """ModelTrainer.training_input_mode should still accept a plain string."""
+        """Verify ModelTrainer.training_input_mode still accepts a plain string."""
         trainer = ModelTrainer(
             training_image=DEFAULT_IMAGE,
             training_input_mode="Pipe",
@@ -163,7 +165,7 @@ class TestModelTrainerRealValuesStillWork:
         assert trainer.training_input_mode == "Pipe"
 
     def test_environment_accepts_real_string_values(self):
-        """ModelTrainer.environment should still accept plain string values."""
+        """Verify ModelTrainer.environment still accepts plain string values."""
         trainer = ModelTrainer(
             training_image=DEFAULT_IMAGE,
             environment={"KEY1": "value1", "KEY2": "value2"},
@@ -175,7 +177,7 @@ class TestModelTrainerRealValuesStillWork:
         assert trainer.environment == {"KEY1": "value1", "KEY2": "value2"}
 
     def test_training_image_rejects_invalid_type(self):
-        """ModelTrainer.training_image should still reject invalid types (e.g., int)."""
+        """Verify ModelTrainer.training_image still rejects invalid types (e.g., int)."""
         with pytest.raises(ValidationError):
             ModelTrainer(
                 training_image=12345,
@@ -187,64 +189,46 @@ class TestModelTrainerRealValuesStillWork:
 
 
 class TestSafeSerializeWithPipelineVariables:
-    """Tests that safe_serialize handles PipelineVariable objects correctly.
+    """Verify that safe_serialize handles PipelineVariable objects correctly.
 
     The safe_serialize function must return PipelineVariable objects as-is
     instead of attempting json.dumps(), which would raise TypeError.
+    See: https://github.com/aws/sagemaker-python-sdk/issues/5504
     """
 
-    def test_safe_serialize_with_parameter_integer_returns_pipeline_variable(self):
-        """safe_serialize should return ParameterInteger as-is."""
-        param = ParameterInteger(name="MaxDepth", default_value=5)
+    @pytest.mark.parametrize("param", [
+        ParameterInteger(name="MaxDepth", default_value=5),
+        ParameterString(name="Optimizer", default_value="adam"),
+        ParameterFloat(name="LearningRate", default_value=0.01),
+    ])
+    def test_safe_serialize_returns_pipeline_variable_as_is(self, param):
+        """Verify safe_serialize returns PipelineVariable objects as-is."""
         result = safe_serialize(param)
         assert result is param
         assert isinstance(result, PipelineVariable)
 
-    def test_safe_serialize_with_parameter_string_returns_pipeline_variable(self):
-        """safe_serialize should return ParameterString as-is."""
-        param = ParameterString(name="Optimizer", default_value="adam")
-        result = safe_serialize(param)
-        assert result is param
-        assert isinstance(result, PipelineVariable)
-
-    def test_safe_serialize_with_parameter_float_returns_pipeline_variable(self):
-        """safe_serialize should return ParameterFloat as-is."""
-        param = ParameterFloat(name="LearningRate", default_value=0.01)
-        result = safe_serialize(param)
-        assert result is param
-        assert isinstance(result, PipelineVariable)
-
-    def test_safe_serialize_still_handles_strings(self):
-        """safe_serialize should return plain strings as-is (no quotes wrapping)."""
-        result = safe_serialize("hello")
-        assert result == "hello"
-
-    def test_safe_serialize_still_handles_integers(self):
-        """safe_serialize should JSON-encode integers."""
-        result = safe_serialize(42)
-        assert result == "42"
-
-    def test_safe_serialize_still_handles_dicts(self):
-        """safe_serialize should JSON-encode dicts."""
-        result = safe_serialize({"key": "value"})
-        assert result == '{"key": "value"}'
-
-    def test_safe_serialize_still_handles_floats(self):
-        """safe_serialize should JSON-encode floats."""
-        result = safe_serialize(0.01)
-        assert result == "0.01"
-
-    def test_safe_serialize_still_handles_booleans(self):
-        """safe_serialize should JSON-encode booleans."""
-        assert safe_serialize(True) == "true"
-        assert safe_serialize(False) == "false"
+    @pytest.mark.parametrize("input_val,expected", [
+        ("hello", "hello"),
+        (42, "42"),
+        ({"key": "value"}, '{"key": "value"}'),
+        (0.01, "0.01"),
+        (True, "true"),
+        (False, "false"),
+    ])
+    def test_safe_serialize_handles_normal_types(self, input_val, expected):
+        """Verify safe_serialize correctly serializes normal (non-PipelineVariable) types."""
+        result = safe_serialize(input_val)
+        assert result == expected
 
 
 class TestModelTrainerHyperparametersWithPipelineVariables:
-    """Tests that ModelTrainer accepts PipelineVariable objects in hyperparameters."""
+    """Verify that ModelTrainer accepts PipelineVariable objects in hyperparameters.
+
+    See: https://github.com/aws/sagemaker-python-sdk/issues/5504
+    """
 
     def test_hyperparameters_accept_pipeline_variable_values(self):
-        """ModelTrainer should accept PipelineVariable objects as hyperparameter values."""
+        """Verify ModelTrainer accepts PipelineVariable objects as hyperparameter values."""
         max_depth = ParameterInteger(name="MaxDepth", default_value=5)
         learning_rate = ParameterFloat(name="LearningRate", default_value=0.01)
         optimizer = ParameterString(name="Optimizer", default_value="adam")
@@ -267,8 +251,10 @@ class TestModelTrainerHyperparametersWithPipelineVariables:
         assert trainer.hyperparameters["optimizer"] is optimizer
         assert trainer.hyperparameters["static_param"] == 10
 
-    def test_create_training_job_args_with_pipeline_variable_hyperparameters(self):
-        """_create_training_job_args should preserve PipelineVariable in hyper_parameters."""
+    def test_create_training_job_args_with_pipeline_variable_hyperparameters(
+        self, modules_session
+    ):
+        """Verify _create_training_job_args preserves PipelineVariable in hyper_parameters."""
         max_depth = ParameterInteger(name="MaxDepth", default_value=5)
         learning_rate = ParameterFloat(name="LearningRate", default_value=0.01)
 
@@ -278,6 +264,7 @@ class TestModelTrainerHyperparametersWithPipelineVariables:
             compute=DEFAULT_COMPUTE,
             stopping_condition=DEFAULT_STOPPING,
             output_data_config=DEFAULT_OUTPUT,
+            sagemaker_session=modules_session,
             hyperparameters={
                 "max_depth": max_depth,
                 "learning_rate": learning_rate,
