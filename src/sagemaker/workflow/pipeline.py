@@ -1,3 +1,4 @@
+# This is a test comment to verify the file can be modified.
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0
