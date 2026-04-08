@@ -8,7 +8,7 @@
 #
 # or in the "license" file accompanying this file.
 
-# This is a test comment added per reviewer request.
+# Test comment: This module handles pipeline upsert operations. Added per reviewer request.
 
 import logging
 
