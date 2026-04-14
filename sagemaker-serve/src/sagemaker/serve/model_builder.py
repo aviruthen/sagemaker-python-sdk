@@ -52,7 +52,7 @@ from sagemaker.core.resources import (
     ModelCard,
     ModelPackageModelCard,
 )
-from sagemaker.core.utils.utils import logger
+from sagemaker.core.utils.utils import logger, Unassigned
 from sagemaker.core.helper import session_helper
 from sagemaker.core.helper.session_helper import (
     Session,
@@ -380,6 +380,7 @@ class ModelBuilder(_InferenceRecommenderMixin, _ModelBuilderServers, _ModelBuild
     _tags: Optional[Tags] = field(default=None, init=False)
     _optimizing: bool = field(default=False, init=False)
     _deployment_config: Optional[Dict[str, Any]] = field(default=None, init=False)
+    _base_model_fields_resolved: bool = field(default=False, init=False)
 
     shared_libs: List[str] = field(
         default_factory=list,
@@ -680,18 +681,198 @@ class ModelBuilder(_InferenceRecommenderMixin, _ModelBuilderServers, _ModelBuild
 
             raise ValueError(error_msg)
 
+    @staticmethod
+    def _normalize_field(value: object, default: str = "") -> str:
+        """Normalize a field value, replacing Unassigned or falsy with default."""
+        if not value or isinstance(value, Unassigned):
+            return default
+        return value
+
+    def _get_base_model_from_package(self) -> object:
+        """Extract the base_model from the model package, or return None.
+
+        Returns:
+            The base_model object if available, or None if the model package
+            does not have a base_model (e.g., no inference_specification,
+            no containers, or no base_model on the first container).
+        """
+        model_package = self._fetch_model_package()
+        if not model_package:
+            return None
+        inference_spec = getattr(model_package, "inference_specification", None)
+        if not inference_spec:
+            return None
+        containers = getattr(inference_spec, "containers", None)
+        if not containers:
+            return None
+        return getattr(containers[0], "base_model", None)
+
+    def _resolve_base_model_fields(self) -> None:
+        """Auto-resolve missing BaseModel fields (hub_content_version, recipe_name).
+
+        When a ModelPackage's BaseModel has hub_content_name set but is missing
+        hub_content_version and/or recipe_name (returned as Unassigned from the
+        DescribeModelPackage API), this method resolves them automatically:
+        - hub_content_version: resolved by calling HubContent.get on SageMakerPublicHub
+        - recipe_name: resolved from the first recipe in the hub document's RecipeCollection
+
+        Note: HubContent.get() supports being called without hub_content_version,
+        in which case it returns the latest version of the hub content.
+        """
+        if self._base_model_fields_resolved:
+            return
+
+        base_model = self._get_base_model_from_package()
+        if not base_model:
+            self._base_model_fields_resolved = True
+            return
+
+        hub_content_name = getattr(base_model, "hub_content_name", None)
+        if not hub_content_name or isinstance(hub_content_name, Unassigned):
+            self._base_model_fields_resolved = True
+            return
+
+        hub_content_version = getattr(base_model, "hub_content_version", None)
+        recipe_name = getattr(base_model, "recipe_name", None)
+
+        # Cache the HubContent response to avoid redundant API calls
+        # when resolving both hub_content_version and recipe_name.
+        cached_hub_content = None
+
+        # Resolve hub_content_version if missing
+        if not hub_content_version or isinstance(hub_content_version, Unassigned):
+            logger.info(
+                "hub_content_version is missing for hub content '%s'. "
+                "Resolving automatically from SageMakerPublicHub...",
+                hub_content_name,
+            )
+            try:
+                cached_hub_content = HubContent.get(
+                    hub_content_type="Model",
+                    hub_name="SageMakerPublicHub",
+                    hub_content_name=hub_content_name,
+                )
+                base_model.hub_content_version = (
+                    cached_hub_content.hub_content_version
+                )
+                logger.info(
+                    "Resolved hub_content_version to '%s' "
+                    "for hub content '%s'.",
+                    cached_hub_content.hub_content_version,
+                    hub_content_name,
+                )
+            except ClientError as e:
+                # Only swallow ResourceNotFoundException; re-raise permission
+                # errors (AccessDeniedException, etc.) so they aren't masked.
+                if e.response["Error"]["Code"] == "ResourceNotFoundException":
+                    logger.warning(
+                        "Failed to resolve hub_content_version "
+                        "for hub content '%s': %s",
+                        hub_content_name,
+                        e,
+                    )
+                    self._base_model_fields_resolved = True
+                    return
+                raise
+
+        # Resolve recipe_name if missing
+        if not recipe_name or isinstance(recipe_name, Unassigned):
+            logger.info(
+                "recipe_name is missing for hub content '%s'. "
+                "Resolving from hub document RecipeCollection...",
+                hub_content_name,
+            )
+            try:
+                # Reuse cached hub content if available (it was fetched
+                # without a version, so it already has the latest).
+                if cached_hub_content is not None:
+                    hub_content = cached_hub_content
+                else:
+                    hub_content = HubContent.get(
+                        hub_content_type="Model",
+                        hub_name="SageMakerPublicHub",
+                        hub_content_name=base_model.hub_content_name,
+                        hub_content_version=(
+                            base_model.hub_content_version
+                        ),
+                    )
+                hub_document = json.loads(
+                    hub_content.hub_content_document
+                )
+                recipe_collection = hub_document.get(
+                    "RecipeCollection", []
+                )
+                if recipe_collection:
+                    resolved_recipe = recipe_collection[0].get(
+                        "Name", ""
+                    )
+                    if resolved_recipe:
+                        base_model.recipe_name = resolved_recipe
+                        logger.info(
+                            "Resolved recipe_name to '%s' "
+                            "for hub content '%s'.",
+                            resolved_recipe,
+                            hub_content_name,
+                        )
+                    else:
+                        logger.warning(
+                            "RecipeCollection found but first "
+                            "recipe has no Name for hub "
+                            "content '%s'.",
+                            hub_content_name,
+                        )
+                else:
+                    logger.warning(
+                        "No RecipeCollection found in hub "
+                        "document for hub content '%s'. "
+                        "recipe_name could not be "
+                        "auto-resolved.",
+                        hub_content_name,
+                    )
+            except ClientError as e:
+                if e.response["Error"]["Code"] == "ResourceNotFoundException":
+                    logger.warning(
+                        "Failed to resolve recipe_name "
+                        "for hub content '%s': %s",
+                        hub_content_name,
+                        e,
+                    )
+                else:
+                    raise
+
+        self._base_model_fields_resolved = True
+
     def _fetch_hub_document_for_custom_model(self) -> dict:
+        """Fetch the hub document for a custom (fine-tuned) model.
+
+        Calls _resolve_base_model_fields() first to ensure hub_content_version
+        is populated. If hub_content_version is still Unassigned after
+        resolution (e.g. resolution failed), HubContent.get() is called
+        without a version parameter, which returns the latest version.
+        """
         from sagemaker.core.shapes import BaseModel as CoreBaseModel
 
+        self._resolve_base_model_fields()
+
+        model_package = self._fetch_model_package()
         base_model: CoreBaseModel = (
-            self._fetch_model_package().inference_specification.containers[0].base_model
+            model_package.inference_specification.containers[0].base_model
         )
-        hub_content = HubContent.get(
+
+        hub_content_version = getattr(
+            base_model, "hub_content_version", None
+        )
+        get_kwargs = dict(
             hub_content_type="Model",
             hub_name="SageMakerPublicHub",
             hub_content_name=base_model.hub_content_name,
-            hub_content_version=base_model.hub_content_version,
         )
+        if hub_content_version and not isinstance(
+            hub_content_version, Unassigned
+        ):
+            get_kwargs["hub_content_version"] = hub_content_version
+
+        hub_content = HubContent.get(**get_kwargs)
         return json.loads(hub_content.hub_content_document)
 
     def _fetch_hosting_configs_for_custom_model(self) -> dict:
@@ -937,9 +1118,26 @@ class ModelBuilder(_InferenceRecommenderMixin, _ModelBuilderServers, _ModelBuild
 
     def _fetch_and_cache_recipe_config(self):
         """Fetch and cache image URI, compute requirements, and s3_upload_path from recipe during build."""
+        # _fetch_hub_document_for_custom_model calls _resolve_base_model_fields
+        # internally, so no need to call it separately here.
         hub_document = self._fetch_hub_document_for_custom_model()
         model_package = self._fetch_model_package()
-        recipe_name = model_package.inference_specification.containers[0].base_model.recipe_name
+        base_model = (
+            model_package.inference_specification
+            .containers[0].base_model
+        )
+        hub_content_name = getattr(
+            base_model, "hub_content_name", "unknown"
+        )
+        recipe_name = getattr(base_model, "recipe_name", None)
+        if not recipe_name or isinstance(recipe_name, Unassigned):
+            raise ValueError(
+                f"recipe_name is missing from the model package's BaseModel "
+                f"(hub_content_name='{hub_content_name}') and could not be "
+                f"auto-resolved from the hub document. Please ensure the model "
+                f"package has a valid recipe_name set, or manually set it before "
+                f"calling build()."
+            )
 
         if not self.s3_upload_path:
             self.s3_upload_path = model_package.inference_specification.containers[
@@ -1050,27 +1248,39 @@ class ModelBuilder(_InferenceRecommenderMixin, _ModelBuilderServers, _ModelBuild
 
     def _is_nova_model(self) -> bool:
         """Check if the model is a Nova model based on recipe name or hub content name."""
-        model_package = self._fetch_model_package()
-        if not model_package:
-            return False
-        containers = getattr(model_package.inference_specification, "containers", None)
-        if not containers:
-            return False
-        base_model = getattr(containers[0], "base_model", None)
+        self._resolve_base_model_fields()
+        base_model = self._get_base_model_from_package()
         if not base_model:
             return False
-        recipe_name = getattr(base_model, "recipe_name", "") or ""
-        hub_content_name = getattr(base_model, "hub_content_name", "") or ""
+        recipe_name = self._normalize_field(
+            getattr(base_model, "recipe_name", ""), default=""
+        )
+        hub_content_name = self._normalize_field(
+            getattr(base_model, "hub_content_name", ""), default=""
+        )
         return "nova" in recipe_name.lower() or "nova" in hub_content_name.lower()
+
+    def _is_nova_model_for_telemetry(self) -> bool:
+        """Check if the model is a Nova model for telemetry tracking."""
+        try:
+            return self._is_nova_model()
+        except Exception:
+            return False
 
     def _get_nova_hosting_config(self, instance_type=None):
         """Get Nova hosting config (image URI, env vars, instance type).
 
         Nova training recipes don't have hosting configs in the JumpStart hub document.
         This provides the hardcoded fallback, matching Rhinestone's getNovaHostingConfigs().
+
+        Note: _resolve_base_model_fields() is already called by _is_nova_model(),
+        which gates all calls to this method.
         """
         model_package = self._fetch_model_package()
-        hub_content_name = model_package.inference_specification.containers[0].base_model.hub_content_name
+        hub_content_name = (
+            model_package.inference_specification
+            .containers[0].base_model.hub_content_name
+        )
 
         configs = self._NOVA_HOSTING_CONFIGS.get(hub_content_name)
         if not configs:
