@@ -1,0 +1,54 @@
+# Lives on the default branch only: the IAM role trusts only tokens issued to
+# workflows running on master, so a feature branch cannot run an edited copy.
+# Dispatch it with the branch to publish. Each channel has its own CodeBuild
+# project (pysdk-preview-publish-<channel>), created by the preview-channel
+# workflow.
+name: Preview publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to build and publish (e.g. feature/foreach-step)"
+        required: true
+      dry_run:
+        description: "Build and verify only; publish nothing"
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: preview-publish-${{ inputs.branch }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Derive channel
+        id: channel
+        env:
+          BRANCH: ${{ inputs.branch }}
+        run: |
+          channel=$(printf '%s' "$BRANCH" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g')
+          [ -n "$channel" ] || { echo "branch has no usable characters"; exit 1; }
+          echo "name=$channel" >> "$GITHUB_OUTPUT"
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::391266019386:role/pysdk-preview-gha-publish
+          aws-region: us-west-2
+      # No source-version override: each project builds only its own branch.
+      - name: Publish ${{ inputs.branch }}
+        uses: aws-actions/aws-codebuild-run-build@v1
+        with:
+          project-name: pysdk-preview-publish-${{ steps.channel.outputs.name }}
+          # The action sets sourceVersion from GITHUB_SHA unless this is on, and
+          # publish.py refuses any source version that is not the channel's branch.
+          disable-source-override: true
+          env-vars-for-codebuild: PREVIEW_DRY_RUN
+        env:
+          PREVIEW_DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}

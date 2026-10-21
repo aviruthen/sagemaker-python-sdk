@@ -1,0 +1,40 @@
+# The job is bound to the `preview-promote` GitHub environment, which must be
+# limited to master and have required reviewers with "Prevent self-review" on.
+# The IAM role it assumes only trusts tokens whose subject is that
+# environment, so skipping the environment means no AWS credentials. Only
+# channels with "external": true can be promoted.
+name: Preview promote to beta
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Feature branch whose channel to promote within"
+        required: true
+      build_number:
+        description: "Publish build number N (the N in X.Y.Z.devN)"
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    environment: preview-promote
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::391266019386:role/pysdk-preview-gha-promote
+          aws-region: us-west-2
+      - name: Promote ${{ inputs.branch }} .dev${{ inputs.build_number }}
+        uses: aws-actions/aws-codebuild-run-build@v1
+        with:
+          project-name: pysdk-preview-promote
+          env-vars-for-codebuild: PREVIEW_BRANCH,PREVIEW_BUILD_NUMBER,PREVIEW_APPROVER
+        env:
+          PREVIEW_BRANCH: ${{ inputs.branch }}
+          PREVIEW_BUILD_NUMBER: ${{ inputs.build_number }}
+          PREVIEW_APPROVER: ${{ github.actor }}

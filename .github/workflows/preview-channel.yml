@@ -1,0 +1,78 @@
+# Creates, updates or deletes a preview channel: the channel's settings in the
+# channels table and every per-channel resource (CodeArtifact repos, publisher
+# roles, publish project). No CR and no deploy.
+#
+# Repo setup (once):
+#   - environment `preview-channel`: deployment branches = master only,
+#     required reviewers = the maintainers, "Prevent self-review" on.
+# The IAM role trusts only tokens issued to jobs in that environment, and the
+# CodeBuild job checks that:
+#   - create: the person who ran it is a maintainer or one of the new owners,
+#   - update/delete: the person who ran it owns the channel or is a maintainer.
+name: Preview channel
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "create, update or delete"
+        type: choice
+        options: [create, update, delete]
+        default: create
+      branch:
+        description: "Staging branch, e.g. feature/foreach-step (the channel is its name lowercased, non-alphanumerics -> -)"
+        required: true
+      owners:
+        description: "Comma-separated GitHub logins who manage access (create: required; update: replaces the list; empty keeps it)"
+        required: false
+      expires:
+        description: "YYYY-MM-DD the channel ends, at most a year out (create: required; update: empty keeps it)"
+        required: false
+      external:
+        description: "Has external (beta) customers"
+        type: choice
+        options: [keep, "false", "true"]
+        default: keep
+      brazil:
+        description: "Mirror each publish to the Brazil package"
+        type: choice
+        options: [keep, "true", "false"]
+        default: keep
+      confirm:
+        description: "delete only: type the channel name. Deletes its repos and every package in them"
+        required: false
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: preview-channel
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    # Waits here until a maintainer other than the person who ran it approves.
+    environment: preview-channel
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::391266019386:role/pysdk-preview-gha-channel
+          aws-region: us-west-2
+      - name: ${{ inputs.action }} ${{ inputs.branch }}
+        uses: aws-actions/aws-codebuild-run-build@v1
+        with:
+          project-name: pysdk-preview-channel
+          env-vars-for-codebuild: PREVIEW_ACTION,PREVIEW_BRANCH,PREVIEW_OWNERS,PREVIEW_EXPIRES,PREVIEW_EXTERNAL,PREVIEW_BRAZIL,PREVIEW_CONFIRM,PREVIEW_ACTOR,PREVIEW_RUN_URL
+        env:
+          PREVIEW_ACTION: ${{ inputs.action }}
+          PREVIEW_BRANCH: ${{ inputs.branch }}
+          PREVIEW_OWNERS: ${{ inputs.owners }}
+          PREVIEW_EXPIRES: ${{ inputs.expires }}
+          PREVIEW_EXTERNAL: ${{ inputs.external }}
+          PREVIEW_BRAZIL: ${{ inputs.brazil }}
+          PREVIEW_CONFIRM: ${{ inputs.confirm }}
+          PREVIEW_ACTOR: ${{ github.actor }}
+          PREVIEW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

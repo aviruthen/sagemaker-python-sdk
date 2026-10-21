@@ -1,0 +1,193 @@
+# PR checks for the sagemaker-factory submodule, which is developed on the
+# sagemaker-experiments-init branch and does not exist on master.
+#
+# WHY THIS FILE IS ON MASTER AND NOT ON THE BRANCH IT GATES.
+#
+# `pull_request_target` reads its workflow definition from the repository's
+# DEFAULT branch, not from the pull request's base branch. That is deliberate:
+# the event runs privileged -- repository secrets plus a write-scoped token --
+# against untrusted fork code, so the definition has to come from one trusted,
+# auditable ref rather than from any branch a contributor can push.
+#
+# The consequence is that a gate for a feature branch cannot live on that feature
+# branch. This was established empirically, not assumed: an earlier copy of this
+# file was merged onto sagemaker-experiments-init and produced ZERO runs. Both
+# triggers were then declared on a single commit to isolate the variable --
+# `pull_request` fired immediately, `pull_request_target` never fired at all, same
+# file, same commit, same PR.
+#
+# So the file lives here, and `branches:` below restricts it to the one branch it
+# gates. On master it is inert: sagemaker-factory/ does not exist here, so the
+# paths: filter cannot match, and no PR onto master can trigger it. Same shape as
+# pr-checks-master-v2.yml, which also sits on master and gates only master-v2.
+#
+# Why a separate file rather than a change to pr-checks-master.yml.
+#
+# Not because the shared file cannot express it -- adding
+# "sagemaker-experiments-init" to its branches: list would work. Two of the four
+# jobs would even need no other change, because their project-name templating
+# already resolves to the projects the CDK creates:
+# -ci-<submodule>-codestyle-doc-tests and -ci-<submodule>-integ-tests.
+#
+# It is separate because of what the other two jobs would cost:
+#
+#   * detect-changes would acquire a FALSE dependency. Its get_dependencies() is
+#     a grep for "sagemaker-" over a module's pyproject.toml, so it reads
+#     comments and URLs as if they were dependencies. On factory's it yields
+#     sagemaker-core (from two comments about the PyPI name) and sagemaker-python
+#     (from the Homepage URL), while factory's real dependencies are boto3-only.
+#     Once factory is in all_modules, find_dependents("sagemaker-core") therefore
+#     returns factory, so EVERY sagemaker-core source change would fire factory's
+#     full integ suite -- real SageMaker training jobs plus two container builds
+#     -- on PRs that cannot affect factory. That cost lands on the core team.
+#   * integ-tests-us-east-1 is gated only on `submodules != '[]'`, so it would
+#     fire on every factory PR and hard-fail: the staging account has no
+#     us-east-1 GithubActionsRole and the CDK defines no us-east-1 environment
+#     for staging at all. It would need its `if` rewritten.
+#   * unit-tests routes every matrix entry through -ci-health-unit-test-v3, which
+#     factory cannot use -- it hardcodes `tox -e py310,py311,py312` and factory is
+#     3.12-only, its `case "$SUBMODULE"` has no factory arm (`*) exit 1`), and on
+#     the public side that project's FailedBuilds feeds CIHealthCompositeAlarm-V3
+#     and its sev2.5 ticketing. It would need a matrix exclude plus a separate
+#     factory-only job anyway.
+#
+# So enrolling factory in the shared file means one exclude and one bypass for a
+# submodule that is meant to be joining the pattern, and both would then be
+# carried into the promotion merge onto public master, where the branch name is
+# meaningless and the carve-outs have to be un-picked by hand. Deleting this one
+# file is the whole promotion step instead.
+#
+# This is INTERIM. Factory should end up in pr-checks-master.yml like every other
+# submodule, at which point this file is deleted. Before that is safe,
+# get_dependencies() must be scoped to the dependencies table -- today it greps
+# "sagemaker-" across the whole pyproject.toml, so factory's comments and Homepage
+# URL register as a dependency on sagemaker-core that does not exist.
+#
+# factory is not on the public repo yet, so the CodeBuild projects this invokes
+# exist only in the staging CI account. They are declared in
+# SageMakerMLFPySDKInfraCDK (createFactoryPrBuilds in lib/projects.ts).
+#
+# KNOWN BROKEN at the time of writing: the integ project's buildspec runs
+# `pyenv global 3.12.2`, but the cpu-integ image it runs on has no 3.12 at all
+# (3.8.18, 3.9.18, 3.10.13, 3.11.5). codestyle-doc-tests and unit-tests both pass;
+# integ-tests fails in pre_build until a CDK change lands. Tracked as follow-up --
+# the gate is still worth enabling for the two that work.
+name: Sagemaker Factory PR Checks
+
+on:
+  pull_request_target:
+    branches:
+      - "sagemaker-experiments-init"
+    paths:
+      - 'sagemaker-factory/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref }}
+  cancel-in-progress: true
+
+permissions:
+  id-token: write
+
+jobs:
+  # pull_request_target runs with repository secrets in scope, and the builds it
+  # starts run the PR's code under a role that can create SageMaker training jobs.
+  # Gate on collaborator status exactly as pr-checks-master.yml does, so a PR from
+  # outside the org needs a human to approve the run first.
+  collab-check:
+    runs-on: ubuntu-latest
+    outputs:
+      approval-env: ${{ steps.collab-check.outputs.result }}
+    steps:
+      - name: Collaborator Check
+        uses: actions/github-script@v7
+        id: collab-check
+        with:
+          github-token: ${{ secrets.COLLAB_CHECK_TOKEN }}
+          result-encoding: string
+          script: |
+            try {
+              const res = await github.rest.repos.checkCollaborator({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: "${{ github.event.pull_request.user.login }}",
+              });
+              console.log("Verifed ${{ github.event.pull_request.user.login }} is a repo collaborator. Auto Approving PR Checks.")
+              return res.status == "204" ? "auto-approve" : "manual-approval"
+            } catch (error) {
+              console.log("${{ github.event.pull_request.user.login }} is not a collaborator. Requiring Manual Approval to run PR Checks.")
+              return "manual-approval"
+            }
+
+  wait-for-approval:
+    runs-on: ubuntu-latest
+    needs: [ collab-check ]
+    environment: ${{ needs.collab-check.outputs.approval-env }}
+    steps:
+      - run: echo "Workflow Approved! Starting Factory PR Checks."
+
+  # No detect-changes job. pr-checks-master.yml needs one to work out which of
+  # four interdependent submodules a diff affects; factory is a single submodule
+  # with no sibling dependencies (its runtime deps are boto3-only), so the paths:
+  # filter above is the whole of the decision.
+  codestyle-doc-tests:
+    runs-on: ubuntu-latest
+    needs: [wait-for-approval]
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.CI_AWS_ROLE_ARN }}
+          aws-region: us-west-2
+          role-duration-seconds: 10800
+
+      - name: Run CodeBuild for sagemaker-factory
+        uses: aws-actions/aws-codebuild-run-build@v1
+        with:
+          project-name: ${{ github.event.repository.name }}-ci-sagemaker-factory-codestyle-doc-tests
+          source-version-override: 'refs/pull/${{ github.event.pull_request.number }}/head^{${{ github.event.pull_request.head.sha }}}'
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    needs: [wait-for-approval]
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.CI_AWS_ROLE_ARN }}
+          aws-region: us-west-2
+          role-duration-seconds: 10800
+
+      # Deliberately a factory-specific project rather than the shared
+      # ci-health-unit-test-v3 one the master workflow uses. Two reasons: that
+      # project's buildspec hardcodes `tox -e py310,py311,py312` and factory is
+      # 3.12-only, and its FailedBuilds metric feeds CIHealthCompositeAlarm-V3,
+      # which owns sev2.5 ticketing -- a PR check must not be able to page anyone.
+      - name: Run Unit Tests for sagemaker-factory
+        uses: aws-actions/aws-codebuild-run-build@v1
+        with:
+          project-name: ${{ github.event.repository.name }}-ci-sagemaker-factory-unit-tests
+          source-version-override: 'refs/pull/${{ github.event.pull_request.number }}/head^{${{ github.event.pull_request.head.sha }}}'
+
+  integ-tests:
+    runs-on: ubuntu-latest
+    needs: [wait-for-approval]
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.CI_AWS_ROLE_ARN }}
+          aws-region: us-west-2
+          role-duration-seconds: 10800
+
+      # The suite needs an S3 bucket, a job execution role and a published task image
+      # in the build account. The buildspec provisions them itself by running
+      # sagemaker-factory/tests/integ/bootstrap_resources.py, so there is no
+      # out-of-band setup step in any account: the bucket is created if absent, and
+      # the task image is reused when its content hash is already published and
+      # rebuilt when it is not. The execution role is the only exception -- it is
+      # passed in with --role-arn, because the build role may not create IAM roles.
+      - name: Run Integ Tests for sagemaker-factory
+        uses: aws-actions/aws-codebuild-run-build@v1
+        with:
+          project-name: ${{ github.event.repository.name }}-ci-sagemaker-factory-integ-tests
+          source-version-override: 'refs/pull/${{ github.event.pull_request.number }}/head^{${{ github.event.pull_request.head.sha }}}'

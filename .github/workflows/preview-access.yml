@@ -1,0 +1,118 @@
+# Grants or revokes read access to one preview channel for one AWS account,
+# or issues a tester token for people without an AWS identity.
+# No CR and no deploy: the grant is written to the access table and the
+# CodeArtifact policies are rebuilt from it in about a minute.
+#
+# Repo setup (once):
+#   - environment `preview-access`: deployment branches = master only.
+#   - environment `preview-access-beta`: deployment branches = master only,
+#     required reviewers = the maintainers, "Prevent self-review" on.
+# The two IAM roles trust only tokens issued to jobs in those environments.
+# The CodeBuild job checks that the actor is an owner of the channel (channels
+# table) or a maintainer, and that a beta grant came through the reviewer-gated
+# job.
+#
+# action token: mints a 12-hour (or shorter) read token for <channel>-internal
+# and prints it as ONE line (a complete `pip install` command) encrypted with
+# age. `recipient` picks the key: empty = the SSH keys on your own GitHub
+# profile (you decrypt and send testers the line); or a tester's GitHub login,
+# SSH public key or age key (they run `age -d ... | sh`). The run log shows
+# only the ciphertext. action revoke-tokens cuts off every token issued for
+# the channel so far.
+name: Preview access
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "grant, revoke, list, token (tester without AWS identity) or revoke-tokens"
+        type: choice
+        options: [grant, revoke, list, token, revoke-tokens]
+        default: grant
+      channel:
+        description: "Channel, e.g. feature-foreach-step (the branch name lowercased, non-alphanumerics -> -)"
+        required: false
+      account:
+        description: "grant/revoke: 12-digit AWS account ID"
+        required: false
+      audience:
+        description: "grant/revoke: internal (AWS employees) or beta (external customer)"
+        type: choice
+        options: [internal, beta]
+        default: internal
+      reason:
+        description: "Why this account or person needs access (recorded)"
+        required: false
+      expires:
+        description: "grant: optional YYYY-MM-DD after which the grant lapses"
+        required: false
+      recipient:
+        description: "token: optional. Empty = encrypt to your own GitHub SSH keys (you decrypt and send testers the one-line pip command). Or a tester's GitHub login, ssh-ed25519/ssh-rsa public key or age1... key"
+        required: false
+      hours:
+        description: "token: lifetime in hours, 1-12"
+        required: false
+        default: "12"
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: preview-access
+  cancel-in-progress: false
+
+jobs:
+  # Everything except a beta grant: no approval.
+  apply:
+    if: ${{ !(inputs.action == 'grant' && inputs.audience == 'beta') }}
+    runs-on: ubuntu-latest
+    environment: preview-access
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::391266019386:role/pysdk-preview-gha-access
+          aws-region: us-west-2
+      - name: ${{ inputs.action }} ${{ inputs.audience }} ${{ inputs.channel }} ${{ inputs.account }}
+        uses: aws-actions/aws-codebuild-run-build@v1
+        with:
+          project-name: pysdk-preview-access
+          env-vars-for-codebuild: PREVIEW_ACTION,PREVIEW_CHANNEL,PREVIEW_ACCOUNT,PREVIEW_AUDIENCE,PREVIEW_REASON,PREVIEW_EXPIRES,PREVIEW_RECIPIENT,PREVIEW_HOURS,PREVIEW_ACTOR,PREVIEW_RUN_URL
+        env:
+          PREVIEW_ACTION: ${{ inputs.action }}
+          PREVIEW_CHANNEL: ${{ inputs.channel }}
+          PREVIEW_ACCOUNT: ${{ inputs.account }}
+          PREVIEW_AUDIENCE: ${{ inputs.audience }}
+          PREVIEW_REASON: ${{ inputs.reason }}
+          PREVIEW_EXPIRES: ${{ inputs.expires }}
+          PREVIEW_RECIPIENT: ${{ inputs.recipient }}
+          PREVIEW_HOURS: ${{ inputs.hours }}
+          PREVIEW_ACTOR: ${{ github.actor }}
+          PREVIEW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+  # A grant to an external account waits for a maintainer to approve the run.
+  beta-grant:
+    if: ${{ inputs.action == 'grant' && inputs.audience == 'beta' }}
+    runs-on: ubuntu-latest
+    environment: preview-access-beta
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::391266019386:role/pysdk-preview-gha-access-beta
+          aws-region: us-west-2
+      - name: grant beta ${{ inputs.channel }} ${{ inputs.account }}
+        uses: aws-actions/aws-codebuild-run-build@v1
+        with:
+          project-name: pysdk-preview-access
+          env-vars-for-codebuild: PREVIEW_ACTION,PREVIEW_CHANNEL,PREVIEW_ACCOUNT,PREVIEW_AUDIENCE,PREVIEW_REASON,PREVIEW_EXPIRES,PREVIEW_ACTOR,PREVIEW_RUN_URL
+        env:
+          PREVIEW_ACTION: grant
+          PREVIEW_CHANNEL: ${{ inputs.channel }}
+          PREVIEW_ACCOUNT: ${{ inputs.account }}
+          PREVIEW_AUDIENCE: beta
+          PREVIEW_REASON: ${{ inputs.reason }}
+          PREVIEW_EXPIRES: ${{ inputs.expires }}
+          PREVIEW_ACTOR: ${{ github.actor }}
+          PREVIEW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
